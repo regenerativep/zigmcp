@@ -1,0 +1,10 @@
+.{
+    .name = "mcp-example-sniff",
+    .version = "0.1.0",
+    .paths = .{""},
+    .dependencies = .{
+        .mcp = .{
+            .path = "../..",
+        },
+    },
+}

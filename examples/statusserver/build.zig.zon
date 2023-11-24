@@ -1,0 +1,10 @@
+.{
+    .name = "mcp-example-serverstatus",
+    .version = "0.1.0",
+    .paths = .{""},
+    .dependencies = .{
+        .mcp = .{
+            .path = "../..",
+        },
+    },
+}
