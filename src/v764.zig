@@ -18,7 +18,7 @@ const Remaining = serde.Remaining;
 const VarInt = @import("varint.zig").VarInt;
 const nbt = @import("nbt.zig");
 
-const generated = @import("generated.zig");
+const generated = @import("mcp-generated");
 pub const Block = generated.Block;
 pub const BlockState = generated.BlockState;
 pub const Biome = generated.Biome;
