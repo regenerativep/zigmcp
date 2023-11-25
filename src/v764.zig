@@ -33,60 +33,16 @@ pub const ProtocolVersion = 764;
 pub const MCVersion = "1.20.2";
 
 /// String serialization type, because the protocol works with codepoint counts, not byte counts
-pub fn PString(comptime max_len_opt: ?usize) type {
-    return struct {
-        pub const UT = []const u8;
-        pub const E = VarI32.E || std.unicode.Utf8DecodeError || error{
-            TruncatedInput,
-            StringTooLarge,
-            NegativeLength,
-            EndOfStream,
-        };
-
-        pub fn characterCount(self: UT) !usize {
-            return try std.unicode.utf8CountCodepoints(self);
-        }
-        pub fn write(writer: anytype, in: UT) !void {
-            try VarI32.write(writer, @intCast(try characterCount(in)));
-            try writer.writeAll(in);
-        }
-
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
-            var len_: i32 = undefined;
-            try VarI32.read(reader, &len_, undefined);
-            if (len_ < 0) return error.NegativeLength;
-            const len: u32 = @intCast(len_);
-            if (max_len_opt) |max_len| {
-                if (len > max_len) return error.StringTooLarge;
-            }
-            var data = try std.ArrayList(u8).initCapacity(a, len);
-            defer data.deinit();
-            var i: u32 = 0;
-            while (i < len) : (i += 1) {
-                const first_byte = try reader.readByte();
-                const codepoint_len = try std.unicode.utf8ByteSequenceLength(first_byte);
-                try data.ensureUnusedCapacity(codepoint_len);
-                data.appendAssumeCapacity(first_byte);
-                if (codepoint_len > 0) {
-                    var codepoint_buf: [3]u8 = undefined;
-                    try reader.readNoEof(codepoint_buf[0 .. codepoint_len - 1]);
-                    data.appendSliceAssumeCapacity(codepoint_buf[0 .. codepoint_len - 1]);
-                }
-            }
-            out.* = try data.toOwnedSlice();
-        }
-        pub fn deinit(self: *UT, alloc: Allocator) void {
-            alloc.free(self.*);
-            self.* = undefined;
-        }
-        pub fn size(self: UT) usize {
-            var len = characterCount(self) catch unreachable;
-            return VarI32.size(@intCast(len)) + self.len;
-        }
-    };
+pub fn PString(comptime max_len_opt: ?comptime_int) type {
+    return serde.Pass(
+        serde.RestrictInt(serde.Casted(VarI32, usize), .{ .max = max_len_opt }),
+        serde.CodepointArray,
+    );
 }
 
 pub const Uuid = struct {
+    // TODO: make serde use same usertype when no detected difference, and then
+    //     we can just put a `pub usingnamespace Spec(Uuid6);` here
     pub const UT = Uuid6;
     pub const E = error{EndOfStream};
     pub fn write(writer: anytype, in: UT) !void {

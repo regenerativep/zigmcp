@@ -426,32 +426,24 @@ pub fn Array(comptime T: type) type {
     };
 }
 
-pub fn PrefixedArray(comptime I: type, comptime T: type, comptime opts: struct {
-    max: ?comptime_int = null,
-}) type {
+pub fn DynamicArray(comptime T: type) type {
     return struct {
-        pub const LenSpec = Spec(I);
         pub const ElemSpec = Spec(T);
         pub const UT = []ElemSpec.UT;
-        pub const E = LenSpec.E || ElemSpec.E || error{ InvalidLength, EndOfStream };
+        pub const E = ElemSpec.E || error{EndOfStream};
+        pub const V = usize;
 
+        pub fn getValue(in: UT) V {
+            return in.len;
+        }
         pub fn write(writer: anytype, in: UT) !void {
-            try LenSpec.write(writer, @intCast(in.len));
             if (ElemSpec.UT == u8) {
                 try writer.writeAll(in);
             } else {
                 for (in) |d| try ElemSpec.write(writer, d);
             }
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
-            var len_: LenSpec.UT = undefined;
-            try LenSpec.read(reader, &len_, a);
-            defer LenSpec.deinit(&len_, a);
-            const len: usize = std.math.cast(usize, len_) orelse
-                return error.InvalidLength;
-            if (opts.max) |max_length| {
-                if (len > max_length) return error.InvalidLength;
-            }
+        pub fn read(reader: anytype, out: *UT, a: Allocator, len: V) !void {
             out.* = try a.alloc(ElemSpec.UT, len);
             errdefer a.free(out.*);
             if (ElemSpec.UT == u8) {
@@ -479,11 +471,89 @@ pub fn PrefixedArray(comptime I: type, comptime T: type, comptime opts: struct {
             self.* = undefined;
         }
         pub fn size(self: UT) usize {
-            var total = LenSpec.size(@intCast(self.len));
+            var total: usize = 0;
             for (self) |d| total += ElemSpec.size(d);
             return total;
         }
     };
+}
+
+pub const CodepointArray = struct {
+    pub const UT = []const u8;
+    pub const E = std.unicode.Utf8DecodeError || error{
+        TruncatedInput,
+        StringTooLarge,
+        EndOfStream,
+    };
+    pub const V = usize;
+
+    pub fn getValue(self: UT) V {
+        return std.unicode.utf8CountCodepoints(self) catch unreachable;
+    }
+    pub fn write(writer: anytype, in: UT) !void {
+        try writer.writeAll(in);
+    }
+
+    pub fn read(reader: anytype, out: *UT, a: Allocator, len: V) !void {
+        var data = try std.ArrayList(u8).initCapacity(a, len);
+        defer data.deinit();
+        var i: u32 = 0;
+        while (i < len) : (i += 1) {
+            const first_byte = try reader.readByte();
+            const codepoint_len = try std.unicode.utf8ByteSequenceLength(first_byte);
+            try data.ensureUnusedCapacity(codepoint_len);
+            data.appendAssumeCapacity(first_byte);
+            if (codepoint_len > 0) {
+                var codepoint_buf: [3]u8 = undefined;
+                try reader.readNoEof(codepoint_buf[0 .. codepoint_len - 1]);
+                data.appendSliceAssumeCapacity(codepoint_buf[0 .. codepoint_len - 1]);
+            }
+        }
+        out.* = try data.toOwnedSlice();
+    }
+    pub fn deinit(self: *UT, alloc: Allocator) void {
+        alloc.free(self.*);
+        self.* = undefined;
+    }
+    pub fn size(self: UT) usize {
+        return self.len;
+    }
+};
+
+pub const RestrictIntOptions = struct {
+    max: ?comptime_int = null,
+};
+pub fn RestrictInt(comptime T: type, comptime opts: RestrictIntOptions) type {
+    return struct {
+        pub const InnerSpec = Spec(T);
+        pub const UT = InnerSpec.UT;
+        pub const E = InnerSpec.E || error{InvalidInt};
+
+        pub fn write(writer: anytype, in: UT) !void {
+            try InnerSpec.write(writer, in);
+        }
+        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+            try InnerSpec.read(reader, out, a);
+            errdefer InnerSpec.deinit(out, a);
+            if (opts.max) |max| {
+                if (out.* > max) return error.InvalidInt;
+            }
+        }
+        pub fn deinit(self: *UT, a: Allocator) void {
+            InnerSpec.deinit(self, a);
+        }
+        pub fn size(self: UT) usize {
+            return InnerSpec.size(self);
+        }
+    };
+}
+
+pub fn PrefixedArray(
+    comptime I: type,
+    comptime T: type,
+    comptime opts: RestrictIntOptions,
+) type {
+    return Pass(RestrictInt(Casted(I, usize), opts), DynamicArray(T));
 }
 
 pub fn Optional(comptime T: type) type {
