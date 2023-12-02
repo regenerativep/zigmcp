@@ -21,7 +21,7 @@ pub fn main() !void {
     print("Listening on {}\n", .{address});
 
     while (true) {
-        var conn = server.accept() catch |e| {
+        const conn = server.accept() catch |e| {
             std.log.err("Failed to accept connection: {any}", .{e});
             continue;
         };
@@ -59,7 +59,7 @@ pub fn handleServerbound(a: Allocator, conn: net.StreamServer.Connection) !void 
 
     var cbr = io.bufferedReader(conn.stream.reader());
     var cbw = io.bufferedWriter(conn.stream.writer());
-    var cr = cbr.reader();
+    const cr = cbr.reader();
 
     // I'm _sure_ there's an amazing way to do this with atomics
     //     (however, I don't know atomics very well)
@@ -92,7 +92,7 @@ pub fn handleServerbound(a: Allocator, conn: net.StreamServer.Connection) !void 
 
     var sbr = io.bufferedReader(server_connection.reader());
     var sbw = io.bufferedWriter(server_connection.writer());
-    var sw = sbw.writer();
+    const sw = sbw.writer();
 
     // -- pass along handshake to server
     try mcio.writePacket(mcv.H.SB, sw, handshake_packet);
@@ -111,7 +111,7 @@ pub fn handleServerbound(a: Allocator, conn: net.StreamServer.Connection) !void 
 
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
-    var aa = arena.allocator();
+    const aa = arena.allocator();
     while (true) {
         //print("waiting for serverbound packet\n", .{});
         var frame = try mcio.PacketFrame.read(cr, aa);
@@ -129,16 +129,17 @@ pub fn handleServerbound(a: Allocator, conn: net.StreamServer.Connection) !void 
 
         switch (current_state) {
             inline else => |v| {
-                const ST = switch (v) {
+                const STS = switch (v) {
                     .handshake => unreachable,
-                    .status => mcv.S.SB,
-                    .login => mcv.L.SB,
-                    .configuration => mcv.C.SB,
-                    .play => mcv.P.SB,
+                    .status => mcv.S,
+                    .login => mcv.L,
+                    .configuration => mcv.C,
+                    .play => mcv.P,
                 };
+                const ST = STS.SB;
                 // yeah we also do a (safer) check in parse, whatever. we need this
                 //     for state switching though
-                const id: ST.SourceSpec.UT = @enumFromInt(frame.id);
+                const id: STS.SBID = @enumFromInt(frame.id);
 
                 stdout_mutex.lock();
                 defer stdout_mutex.unlock();
@@ -206,8 +207,8 @@ pub fn handleClientbound(
     alive_mutex: *std.Thread.Mutex,
 ) !void {
     @setEvalBranchQuota(10_000);
-    var sr = sbr.reader();
-    var cw = cbw.writer();
+    const sr = sbr.reader();
+    const cw = cbw.writer();
 
     defer {
         alive_mutex.lock();
@@ -220,7 +221,7 @@ pub fn handleClientbound(
 
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
-    var aa = arena.allocator();
+    const aa = arena.allocator();
     while (true) {
         //print("waiting for clientbound packet\n", .{});
         var frame = try mcio.PacketFrame.read(sr, aa);
@@ -236,14 +237,15 @@ pub fn handleClientbound(
 
         switch (current_state) {
             inline else => |v| {
-                const ST = switch (v) {
+                const STS = switch (v) {
                     .handshake => unreachable,
-                    .status => mcv.S.CB,
-                    .login => mcv.L.CB,
-                    .configuration => mcv.C.CB,
-                    .play => mcv.P.CB,
+                    .status => mcv.S,
+                    .login => mcv.L,
+                    .configuration => mcv.C,
+                    .play => mcv.P,
                 };
-                const id: ST.SourceSpec.UT = @enumFromInt(frame.id);
+                const ST = STS.CB;
+                const id: STS.CBID = @enumFromInt(frame.id);
 
                 stdout_mutex.lock();
                 defer stdout_mutex.unlock();
@@ -270,6 +272,7 @@ pub fn handleClientbound(
                     }
                 }
 
+                //@compileLog(v);
                 var packet = frame.parse(ST, aa) catch |e| {
                     try stdout.print("parse error: \"{s}\"\n", .{@errorName(e)});
                     continue;

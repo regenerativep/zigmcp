@@ -21,7 +21,7 @@ pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
     defer arena.deinit();
     while (true) {
-        var conn = server.accept() catch |e| {
+        const conn = server.accept() catch |e| {
             std.log.err("Failed to accept connection: {any}", .{e});
             continue;
         };
@@ -43,9 +43,9 @@ pub fn handleClient(a: Allocator, conn: net.StreamServer.Connection) !void {
     var bw = io.bufferedWriter(conn.stream.writer());
     if (handshake_packet.handshake.next_state == .login) {
         // Login state
-        try mcio.writePacket(mcv.L.CB, bw.writer(), .{ .disconnect = @constCast(
-            \\{"text":"This server does not support logging in."}
-        ) });
+        try mcio.writePacket(mcv.L.CB, bw.writer(), .{ .disconnect = 
+        \\{"text":"This server does not support logging in."}
+        });
         try bw.flush();
         return;
     }
@@ -73,9 +73,7 @@ pub fn handleClient(a: Allocator, conn: net.StreamServer.Connection) !void {
         \\}
     ;
 
-    try mcio.writePacket(mcv.S.CB, bw.writer(), .{
-        .status_response = @constCast(response_data),
-    });
+    try mcio.writePacket(mcv.S.CB, bw.writer(), .{ .status_response = response_data });
     try bw.flush();
     var stderr = std.io.getStdErr().writer();
     stderr.print("Sent status to {}", .{conn.address}) catch {};

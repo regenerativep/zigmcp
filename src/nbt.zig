@@ -52,7 +52,7 @@ pub const Tag = enum(u8) {
 
 pub const NamedTag = struct {
     tag: Tag,
-    name: []u8,
+    name: []const u8,
 
     pub const ST = serde.PrefixedArray(u16, u8, .{});
     pub const UT = @This();
@@ -66,7 +66,7 @@ pub const NamedTag = struct {
     }
     pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
         const tag = try Tag.fromInt(try reader.readByte());
-        var name: []u8 = @constCast("");
+        var name: []const u8 = "";
         if (tag != .end)
             try ST.read(reader, &name, a);
         out.* = .{
@@ -118,14 +118,14 @@ pub fn Compound(comptime T: type) type {
                     @field(in, field.name);
                 try NamedTag.write(writer, .{
                     .tag = specs[i].getTag(d),
-                    .name = @constCast(if (@hasDecl(specs[i], "Name"))
+                    .name = if (@hasDecl(specs[i], "Name"))
                         specs[i].Name
                     else
-                        field.name),
+                        field.name,
                 });
                 try specs[i].write(writer, d);
             }
-            try NamedTag.write(writer, .{ .tag = .end, .name = @constCast("") });
+            try NamedTag.write(writer, .{ .tag = .end, .name = "" });
         }
         pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
             var written = std.StaticBitSet(specs.len).initEmpty();
@@ -216,10 +216,10 @@ pub fn Compound(comptime T: type) type {
                 total +=
                     NamedTag.size(.{
                     .tag = specs[i].getTag(d),
-                    .name = @constCast(if (@hasDecl(specs[i], "Name"))
+                    .name = if (@hasDecl(specs[i], "Name"))
                         specs[i].Name
                     else
-                        field.name),
+                        field.name,
                 }) +
                     specs[i].size(d);
             }
@@ -237,7 +237,7 @@ pub fn List(comptime T: type) type {
         const tag = tagFromType(T);
         pub const LenSpec = serde.Casted(serde.Num(i32, .big), usize);
         pub const InnerSpec = Spec(T);
-        pub const UT = []InnerSpec.UT;
+        pub const UT = []const InnerSpec.UT;
         pub const E = InnerSpec.E || LenSpec.E || Tag.E || error{
             EndOfStream,
             InvalidTag,
@@ -252,15 +252,15 @@ pub fn List(comptime T: type) type {
                 return error.InvalidTag;
             var len: usize = undefined;
             try LenSpec.read(reader, &len, undefined);
-            out.* = try a.alloc(InnerSpec.UT, len);
-            errdefer a.free(out.*);
+            var arr = try a.alloc(InnerSpec.UT, len);
+            errdefer a.free(arr);
 
-            for (out.*, 0..) |*item, i| {
+            for (arr, 0..) |*item, i| {
                 errdefer {
                     var j = i;
                     while (j > 0) {
                         j -= 1;
-                        InnerSpec.deinit(&out.*[j], a);
+                        InnerSpec.deinit(&arr[j], a);
                     }
                 }
                 if (@hasDecl(InnerSpec, "NbtTag")) {
@@ -278,12 +278,13 @@ pub fn List(comptime T: type) type {
                     try InnerSpec.read(reader, item, a, tag);
                 }
             }
+            out.* = arr;
         }
         pub fn deinit(self: *UT, a: Allocator) void {
             var i = self.len;
             while (i > 0) {
                 i -= 1;
-                InnerSpec.deinit(&self.*[i], a);
+                InnerSpec.deinit(@constCast(&self.*[i]), a);
             }
             a.free(self.*);
             self.* = undefined;
@@ -388,12 +389,12 @@ pub const DynamicValue = union(Tag) {
     long: i64,
     float: f32,
     double: f64,
-    byte_array: []i8,
-    string: []u8,
-    list: []DynamicValue.UT,
+    byte_array: []const i8,
+    string: []const u8,
+    list: []const DynamicValue.UT,
     compound: DynamicCompound.UT,
-    int_array: []i32,
-    long_array: []i64,
+    int_array: []const i32,
+    long_array: []const i64,
 
     pub const UT = @This();
     pub const E = NamedTag.E || Tag.E || error{ EndOfStream, TooDeep, InvalidLength };
@@ -488,7 +489,7 @@ pub const DynamicValue = union(Tag) {
                 var i = d.len;
                 while (i > 0) {
                     i -= 1;
-                    DynamicValue.deinit(&d[i], a);
+                    DynamicValue.deinit(@constCast(&d[i]), a);
                 }
                 a.free(d);
             },
@@ -587,8 +588,8 @@ pub const DynamicValue = union(Tag) {
 };
 
 pub const DynamicCompound = struct {
-    pub const KV = struct { name: []u8, value: DynamicValue };
-    pub const UT = []KV;
+    pub const KV = struct { name: []const u8, value: DynamicValue };
+    pub const UT = []const KV;
     pub const E = DynamicValue.E;
 
     pub fn write(
@@ -598,10 +599,10 @@ pub const DynamicCompound = struct {
     ) (@TypeOf(writer).Error || E)!void {
         assert(depth > 0);
         for (in) |kv| {
-            try NamedTag.write(writer, .{ .tag = kv.value, .name = @constCast(kv.name) });
+            try NamedTag.write(writer, .{ .tag = kv.value, .name = kv.name });
             try DynamicValue.write(writer, kv.value, depth - 1);
         }
-        try NamedTag.write(writer, .{ .tag = .end, .name = @constCast("") });
+        try NamedTag.write(writer, .{ .tag = .end, .name = "" });
     }
     pub fn read(
         reader: anytype,
@@ -640,7 +641,7 @@ pub const DynamicCompound = struct {
         while (i > 0) {
             i -= 1;
             a.free(self.*[i].name);
-            DynamicValue.deinit(&self.*[i].value, a);
+            DynamicValue.deinit(@constCast(&self.*[i].value), a);
         }
         a.free(self.*);
         self.* = undefined;
@@ -787,7 +788,7 @@ pub fn Named(comptime name: ?[]const u8, comptime T: type) type {
         pub fn write(writer: anytype, in: UT) !void {
             if (name != null) {
                 try NamedTag.write(writer, .{
-                    .name = @constCast(name.?),
+                    .name = name.?,
                     .tag = InnerSpec.getTag(in),
                 });
             } else {
@@ -823,7 +824,7 @@ pub fn Named(comptime name: ?[]const u8, comptime T: type) type {
                 1
             else
                 NamedTag.size(.{
-                    .name = @constCast(name.?),
+                    .name = name.?,
                     .tag = InnerSpec.getTag(self),
                 });
         }
@@ -890,7 +891,7 @@ test "named tags" {
         NamedTag,
         &.{ @intFromEnum(Tag.byte_array), 0, 4, 't', 'e', 's', 't' },
         .{
-            .name = @constCast("test"),
+            .name = "test",
             .tag = .byte_array,
         },
     );
@@ -904,7 +905,7 @@ test "test.nbt" {
             0x72, 0x6c, 0x64, 0x08, 0x00, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x00,
             0x09, 0x42, 0x61, 0x6e, 0x61, 0x6e, 0x72, 0x61, 0x6d, 0x61, 0x00,
         },
-        .{ .name = @constCast("Bananrama") },
+        .{ .name = "Bananrama" },
     );
 }
 

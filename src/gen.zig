@@ -36,45 +36,45 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const a = gpa.allocator();
 
-    var args = try std.process.argsAlloc(a);
+    const args = try std.process.argsAlloc(a);
     defer std.process.argsFree(a, args);
 
     const MinecraftVersion = "1.20.2";
     const minecraft_data_path = args[1];
     const out_fname = args[2];
-    var datapaths_path = try path.join(a, &.{
+    const datapaths_path = try path.join(a, &.{
         minecraft_data_path,
         "dataPaths.json",
     });
     defer a.free(datapaths_path);
 
-    var datapaths_data = try readFileData(a, datapaths_path);
+    const datapaths_data = try readFileData(a, datapaths_path);
     defer a.free(datapaths_data);
     var datapaths_json = try json.parseFromSlice(json.Value, a, datapaths_data, .{});
     defer datapaths_json.deinit();
 
     var datapaths_obj =
         datapaths_json.value.object.get("pc").?.object.get(MinecraftVersion).?.object;
-    var blocks_path = try path.join(a, &.{
+    const blocks_path = try path.join(a, &.{
         minecraft_data_path,
         datapaths_obj.get("blocks").?.string,
         "blocks.json",
     });
     defer a.free(blocks_path);
-    var biomes_path = try path.join(a, &.{
+    const biomes_path = try path.join(a, &.{
         minecraft_data_path,
         datapaths_obj.get("biomes").?.string,
         "biomes.json",
     });
     defer a.free(biomes_path);
-    var effects_path = try path.join(a, &.{
+    const effects_path = try path.join(a, &.{
         minecraft_data_path,
         datapaths_obj.get("effects").?.string,
         "effects.json",
     });
     defer a.free(effects_path);
 
-    var blocks_data = try readFileData(a, blocks_path);
+    const blocks_data = try readFileData(a, blocks_path);
     defer a.free(blocks_data);
 
     var blocks_json = try json.parseFromSlice([]const struct {
@@ -111,7 +111,7 @@ pub fn main() !void {
     }, a, blocks_data, .{ .ignore_unknown_fields = true });
     defer blocks_json.deinit();
 
-    var biomes_data = try readFileData(a, biomes_path);
+    const biomes_data = try readFileData(a, biomes_path);
     defer a.free(biomes_data);
 
     var biomes_json = try json.parseFromSlice([]const struct {
@@ -132,10 +132,10 @@ pub fn main() !void {
     }, a, biomes_data, .{});
     defer biomes_json.deinit();
 
-    var effects_data = try readFileData(a, effects_path);
+    const effects_data = try readFileData(a, effects_path);
     defer a.free(effects_data);
 
-    var effects_json = try json.parseFromSlice([]const struct {
+    const effects_json = try json.parseFromSlice([]const struct {
         id: usize,
         displayName: []const u8,
         name: []const u8,
@@ -161,7 +161,7 @@ pub fn main() !void {
         \\pub const Block = enum(Id) {
         \\
     );
-    var blroot = blocks_json.value;
+    const blroot = blocks_json.value;
     var max_block_id: usize = 0;
     for (blroot) |v| {
         if (v.id > max_block_id) max_block_id = v.id;
@@ -384,7 +384,7 @@ pub fn main() !void {
         \\
     );
 
-    var biroot = biomes_json.value;
+    const biroot = biomes_json.value;
     var max_biome_id: usize = 0;
     var category_set = std.BufSet.init(a);
     defer category_set.deinit();
@@ -445,7 +445,7 @@ pub fn main() !void {
         };
         try w.print(" " ** 12 ++ "=> .{s},\n\n", .{category.*});
     }
-    var efroot = effects_json.value;
+    const efroot = effects_json.value;
     var max_effect_id: usize = 0;
     try w.writeAll(
         \\        };

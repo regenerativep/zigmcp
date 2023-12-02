@@ -244,7 +244,6 @@ pub fn Union(comptime T: type) type {
             switch (tag) {
                 inline else => |v| {
                     out.* = @unionInit(UT, @tagName(v), undefined);
-                    //@compileLog(@tagName(v));
                     try specs[comptime tagI(v)].read(
                         reader,
                         &@field(out, @tagName(v)),
@@ -429,7 +428,7 @@ pub fn Array(comptime T: type) type {
 pub fn DynamicArray(comptime T: type) type {
     return struct {
         pub const ElemSpec = Spec(T);
-        pub const UT = []ElemSpec.UT;
+        pub const UT = []const ElemSpec.UT;
         pub const E = ElemSpec.E || error{EndOfStream};
         pub const V = usize;
 
@@ -444,28 +443,29 @@ pub fn DynamicArray(comptime T: type) type {
             }
         }
         pub fn read(reader: anytype, out: *UT, a: Allocator, len: V) !void {
-            out.* = try a.alloc(ElemSpec.UT, len);
-            errdefer a.free(out.*);
+            var arr = try a.alloc(ElemSpec.UT, len);
+            errdefer a.free(arr);
             if (ElemSpec.UT == u8) {
-                try reader.readNoEof(out.*);
+                try reader.readNoEof(arr);
             } else {
-                for (out.*, 0..) |*d, i| {
+                for (arr, 0..) |*d, i| {
                     errdefer {
                         var j = i;
                         while (j > 0) {
                             j -= 1;
-                            ElemSpec.deinit(&out.*[j], a);
+                            ElemSpec.deinit(&arr[j], a);
                         }
                     }
                     try ElemSpec.read(reader, d, a);
                 }
             }
+            out.* = arr;
         }
         pub fn deinit(self: *UT, a: Allocator) void {
             var i = self.len;
             while (i > 0) {
                 i -= 1;
-                ElemSpec.deinit(&self.*[i], a);
+                ElemSpec.deinit(@constCast(&self.*[i]), a);
             }
             a.free(self.*);
             self.* = undefined;
@@ -595,7 +595,7 @@ pub fn Remaining(comptime T: type, comptime opts: struct {
 }) type {
     return struct {
         pub const ElemSpec = Spec(T);
-        pub const UT = []ElemSpec.UT;
+        pub const UT = []const ElemSpec.UT;
         pub const E = ElemSpec.E || error{EndOfStream};
 
         pub fn write(writer: anytype, in: UT) !void {
@@ -606,7 +606,7 @@ pub fn Remaining(comptime T: type, comptime opts: struct {
                 reader_,
                 if (opts.max) |max| max else std.math.maxInt(u64),
             );
-            var reader = lr.reader();
+            const reader = lr.reader();
             var arr = if (opts.est_size) |est_size|
                 try std.ArrayListUnmanaged(ElemSpec.UT).initCapacity(a, est_size)
             else
@@ -637,7 +637,7 @@ pub fn Remaining(comptime T: type, comptime opts: struct {
             var i = self.len;
             while (i > 0) {
                 i -= 1;
-                ElemSpec.deinit(&self.*[i], a);
+                ElemSpec.deinit(@constCast(&self.*[i]), a);
             }
             a.free(self.*);
             self.* = undefined;
@@ -972,8 +972,15 @@ test "serde" {
                 B: u8,
                 C: Num(u16, .little),
             },
+            e: PrefixedArray(Num(u16, .big), struct {
+                a: enum(u8) { f = 0x00, g = 0x01, h = 0x02 },
+                b: i8,
+            }, .{}),
         }),
-        &.{ 0x00, 0x00, 0x01, 0x02, 0x01, 0x08, 0x10, 0x00, 0x02, 0x05, 0x00 },
+        &.{
+            0x00, 0x00, 0x01, 0x02, 0x01, 0x08, 0x10, 0x00, 0x02, 0x05, 0x00,
+            0x00, 0x03, 0x02, 0x03, 0x02, 0x05, 0x01, 0x06,
+        },
         .{
             .a = 258,
             .b = .{
@@ -983,6 +990,7 @@ test "serde" {
             },
             .c = .C,
             .d = .{ .B = 0x00 },
+            .e = &.{ .{ .a = .h, .b = 3 }, .{ .a = .h, .b = 5 }, .{ .a = .g, .b = 6 } },
         },
     );
 }

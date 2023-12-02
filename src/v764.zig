@@ -79,7 +79,7 @@ pub const MaxNbtDepth = 32;
 
 pub fn Registry(comptime name: []const u8, comptime Entry: type) type {
     return nbt.WithName(name, struct {
-        type: nbt.Constant(nbt.String, @constCast(name), serde.strEql),
+        type: nbt.Constant(nbt.String, name, serde.strEql),
         value: []struct {
             name: nbt.String,
             id: i32,
@@ -1677,12 +1677,11 @@ pub const PlayerAbilitiesFlags = serde.Packed(packed struct(u8) {
 }, .big);
 
 pub const H = struct {
-    pub const SB = TaggedUnion(VarU7, union(PacketIds) {
-        pub const PacketIds = enum(u7) {
-            handshake = 0x00,
-            legacy,
-        };
-
+    pub const SBID = enum(u7) {
+        handshake = 0x00,
+        legacy,
+    };
+    pub const SB = TaggedUnion(VarU7, union(SBID) {
         handshake: struct {
             protocol_version: VarI32,
             server_address: PString(255),
@@ -1694,34 +1693,32 @@ pub const H = struct {
 };
 
 pub const S = struct {
-    pub const SB = TaggedUnion(VarU7, union(PacketIds) {
-        pub const PacketIds = enum(u7) {
-            status_request = 0x00,
-            ping_request = 0x01,
-        };
-
+    pub const SBID = enum(u7) {
+        status_request = 0x00,
+        ping_request = 0x01,
+    };
+    pub const SB = TaggedUnion(VarU7, union(SBID) {
         status_request: void,
         ping_request: i64,
     });
-    pub const CB = TaggedUnion(VarU7, union(PacketIds) {
-        pub const PacketIds = enum(u7) {
-            status_response = 0x00,
-            ping_response = 0x01,
-        };
-
+    pub const CBID = enum(u7) {
+        status_response = 0x00,
+        ping_response = 0x01,
+    };
+    pub const CB = TaggedUnion(VarU7, union(CBID) {
         status_response: PString(32767),
         ping_response: i64,
     });
 };
 
 pub const L = struct {
-    pub const SB = TaggedUnion(VarU7, union(PacketIds) {
-        pub const PacketIds = enum(u7) {
-            login_start = 0x00,
-            encryption_response = 0x01,
-            login_plugin_response = 0x02,
-            login_acknowledged = 0x03,
-        };
+    pub const SBID = enum(u7) {
+        login_start = 0x00,
+        encryption_response = 0x01,
+        login_plugin_response = 0x02,
+        login_acknowledged = 0x03,
+    };
+    pub const SB = TaggedUnion(VarU7, union(SBID) {
         login_start: struct {
             name: PString(16),
             uuid: Uuid,
@@ -1736,14 +1733,14 @@ pub const L = struct {
         },
         login_acknowledged: void,
     });
-    pub const CB = TaggedUnion(VarU7, union(PacketIds) {
-        pub const PacketIds = enum(u7) {
-            disconnect = 0x00,
-            encryption_request = 0x01,
-            login_success = 0x02,
-            set_compression = 0x03,
-            login_plugin_request = 0x04,
-        };
+    pub const CBID = enum(u7) {
+        disconnect = 0x00,
+        encryption_request = 0x01,
+        login_success = 0x02,
+        set_compression = 0x03,
+        login_plugin_request = 0x04,
+    };
+    pub const CB = TaggedUnion(VarU7, union(CBID) {
         disconnect: ChatString,
         encryption_request: struct {
             server_id: PString(20),
@@ -1768,15 +1765,15 @@ pub const L = struct {
 };
 
 pub const C = struct {
-    pub const SB = TaggedUnion(VarU7, union(PacketIds) {
-        pub const PacketIds = enum(u7) {
-            client_information = 0x00,
-            plugin_message = 0x01,
-            finish_configuration = 0x02,
-            keep_alive = 0x03,
-            pong = 0x04,
-            resource_pack_response = 0x05,
-        };
+    pub const SBID = enum(u7) {
+        client_information = 0x00,
+        plugin_message = 0x01,
+        finish_configuration = 0x02,
+        keep_alive = 0x03,
+        pong = 0x04,
+        resource_pack_response = 0x05,
+    };
+    pub const SB = TaggedUnion(VarU7, union(SBID) {
         client_information: ClientInformation,
         plugin_message: struct {
             channel: Identifier,
@@ -1792,18 +1789,18 @@ pub const C = struct {
             accepted = 4,
         }),
     });
-    pub const CB = TaggedUnion(VarU7, union(PacketIds) {
-        pub const PacketIds = enum(u7) {
-            plugin_message = 0x00,
-            disconnect = 0x01,
-            finish_configuration = 0x02,
-            keep_alive = 0x03,
-            ping = 0x04,
-            registry_data = 0x05,
-            resource_pack = 0x06,
-            feature_flags = 0x07,
-            update_tags = 0x08,
-        };
+    pub const CBID = enum(u7) {
+        plugin_message = 0x00,
+        disconnect = 0x01,
+        finish_configuration = 0x02,
+        keep_alive = 0x03,
+        ping = 0x04,
+        registry_data = 0x05,
+        resource_pack = 0x06,
+        feature_flags = 0x07,
+        update_tags = 0x08,
+    };
+    pub const CB = TaggedUnion(VarU7, union(CBID) {
         plugin_message: struct {
             channel: Identifier,
             data: Remaining(u8, .{ .max = 1048576 }),
@@ -1830,122 +1827,128 @@ pub const C = struct {
 };
 
 pub const P = struct {
-    pub const CB = TaggedUnion(VarU7, union(PacketIds) {
-        pub const PacketIds = enum(u7) {
-            bundle_delimeter = 0x00,
-            spawn_entity = 0x01,
-            spawn_experience_orb = 0x02,
-            entity_animation = 0x03,
-            award_statistics = 0x04,
-            acknowledge_block_change = 0x05,
-            set_block_destroy_stage = 0x06,
-            block_entity_data = 0x07,
-            block_action = 0x08,
-            block_update = 0x09,
-            boss_bar = 0x0A,
-            change_difficulty = 0x0B,
-            chunk_batch_finished = 0x0C,
-            chunk_batch_start = 0x0D,
-            chunk_biomes = 0x0E,
-            clear_titles = 0x0F,
-            command_suggestions_response = 0x10,
-            commands = 0x11,
-            close_container = 0x12,
-            set_container_content = 0x13,
-            set_container_property = 0x14,
-            set_container_slot = 0x15,
-            set_cooldown = 0x16,
-            chat_suggestions = 0x17,
-            plugin_message = 0x18,
-            damage_event = 0x19,
-            delete_message = 0x1A,
-            disconnect = 0x1B,
-            disguised_chat_message = 0x1C,
-            entity_event = 0x1D,
-            explosion = 0x1E,
-            unload_chunk = 0x1F,
-            game_event = 0x20,
-            open_horse_screen = 0x21,
-            hurt_animation = 0x22,
-            world_border_init = 0x23,
-            keep_alive = 0x24,
-            chunk_data_and_update_light = 0x25,
-            world_event = 0x26,
-            particle = 0x27,
-            update_light = 0x28,
-            login = 0x29,
-            map_data = 0x2A,
-            merchant_offers = 0x2B,
-            update_entity_position = 0x2C,
-            update_entity_position_and_rotation = 0x2D,
-            update_entity_rotation = 0x2E,
-            move_vehicle = 0x2F,
-            open_book = 0x30,
-            open_screen = 0x31,
-            open_sign_editor = 0x32,
-            ping = 0x33,
-            ping_response = 0x34,
-            place_ghost_recipe = 0x35,
-            player_abilities = 0x36,
-            player_chat_message = 0x37,
-            end_combat = 0x38,
-            enter_combat = 0x39,
-            combat_death = 0x3A,
-            player_info_remove = 0x3B,
-            player_info_update = 0x3C,
-            look_at = 0x3D,
-            synchronize_player_position = 0x3E,
-            update_recipe_book = 0x3F,
-            remove_entities = 0x40,
-            remove_entity_effect = 0x41,
-            resource_pack = 0x42,
-            respawn = 0x43,
-            set_head_rotation = 0x44,
-            update_section_blocks = 0x45,
-            select_advancements_tab = 0x46,
-            server_data = 0x47,
-            set_action_bar_text = 0x48,
-            set_border_center = 0x49,
-            set_border_lerp_size = 0x4A,
-            set_border_size = 0x4B,
-            set_border_warning_delay = 0x4C,
-            set_border_warning_distance = 0x4D,
-            set_camera = 0x4E,
-            set_held_item = 0x4F,
-            set_center_chunk = 0x50,
-            set_render_distance = 0x51,
-            set_default_spawn_position = 0x52,
-            display_objective = 0x53,
-            set_entity_metadata = 0x54,
-            link_entities = 0x55,
-            set_entity_velocity = 0x56,
-            set_equipment = 0x57,
-            set_experience = 0x58,
-            set_health = 0x59,
-            update_objectives = 0x5A,
-            set_passengers = 0x5B,
-            update_teams = 0x5C,
-            update_score = 0x5D,
-            set_simulation_distance = 0x5E,
-            set_subtitle_text = 0x5F,
-            update_time = 0x60,
-            set_title_text = 0x61,
-            set_title_animation_times = 0x62,
-            entity_sound_effect = 0x63,
-            sound_effect = 0x64,
-            start_configuration = 0x65,
-            stop_sound = 0x66,
-            system_chat_message = 0x67,
-            set_tab_list_header_and_footer = 0x68,
-            tag_query_response = 0x69,
-            pickup_item = 0x6A,
-            teleport_entity = 0x6B,
-            update_advancements = 0x6C,
-            update_attributes = 0x6D,
-            entity_effect = 0x6E,
-            update_recipes = 0x6F,
-            update_tags = 0x70,
-        };
+    pub const CBID = enum(u7) {
+        bundle_delimeter = 0x00,
+        spawn_entity = 0x01,
+        spawn_experience_orb = 0x02,
+        entity_animation = 0x03,
+        award_statistics = 0x04,
+        acknowledge_block_change = 0x05,
+        set_block_destroy_stage = 0x06,
+        block_entity_data = 0x07,
+        block_action = 0x08,
+        block_update = 0x09,
+        boss_bar = 0x0A,
+        change_difficulty = 0x0B,
+        chunk_batch_finished = 0x0C,
+        chunk_batch_start = 0x0D,
+        chunk_biomes = 0x0E,
+        clear_titles = 0x0F,
+        command_suggestions_response = 0x10,
+        commands = 0x11,
+        close_container = 0x12,
+        set_container_content = 0x13,
+        set_container_property = 0x14,
+        set_container_slot = 0x15,
+        set_cooldown = 0x16,
+        chat_suggestions = 0x17,
+        plugin_message = 0x18,
+        damage_event = 0x19,
+        delete_message = 0x1A,
+        disconnect = 0x1B,
+        disguised_chat_message = 0x1C,
+        entity_event = 0x1D,
+        explosion = 0x1E,
+        unload_chunk = 0x1F,
+        game_event = 0x20,
+        open_horse_screen = 0x21,
+        hurt_animation = 0x22,
+        world_border_init = 0x23,
+        keep_alive = 0x24,
+        chunk_data_and_update_light = 0x25,
+        world_event = 0x26,
+        particle = 0x27,
+        update_light = 0x28,
+        login = 0x29,
+        map_data = 0x2A,
+        merchant_offers = 0x2B,
+        update_entity_position = 0x2C,
+        update_entity_position_and_rotation = 0x2D,
+        update_entity_rotation = 0x2E,
+        move_vehicle = 0x2F,
+        open_book = 0x30,
+        open_screen = 0x31,
+        open_sign_editor = 0x32,
+        ping = 0x33,
+        ping_response = 0x34,
+        place_ghost_recipe = 0x35,
+        player_abilities = 0x36,
+        player_chat_message = 0x37,
+        end_combat = 0x38,
+        enter_combat = 0x39,
+        combat_death = 0x3A,
+        player_info_remove = 0x3B,
+        player_info_update = 0x3C,
+        look_at = 0x3D,
+        synchronize_player_position = 0x3E,
+        update_recipe_book = 0x3F,
+        remove_entities = 0x40,
+        remove_entity_effect = 0x41,
+        resource_pack = 0x42,
+        respawn = 0x43,
+        set_head_rotation = 0x44,
+        update_section_blocks = 0x45,
+        select_advancements_tab = 0x46,
+        server_data = 0x47,
+        set_action_bar_text = 0x48,
+        set_border_center = 0x49,
+        set_border_lerp_size = 0x4A,
+        set_border_size = 0x4B,
+        set_border_warning_delay = 0x4C,
+        set_border_warning_distance = 0x4D,
+        set_camera = 0x4E,
+        set_held_item = 0x4F,
+        set_center_chunk = 0x50,
+        set_render_distance = 0x51,
+        set_default_spawn_position = 0x52,
+        display_objective = 0x53,
+        set_entity_metadata = 0x54,
+        link_entities = 0x55,
+        set_entity_velocity = 0x56,
+        set_equipment = 0x57,
+        set_experience = 0x58,
+        set_health = 0x59,
+        update_objectives = 0x5A,
+        set_passengers = 0x5B,
+        update_teams = 0x5C,
+        update_score = 0x5D,
+        set_simulation_distance = 0x5E,
+        set_subtitle_text = 0x5F,
+        update_time = 0x60,
+        set_title_text = 0x61,
+        set_title_animation_times = 0x62,
+        entity_sound_effect = 0x63,
+        sound_effect = 0x64,
+        start_configuration = 0x65,
+        stop_sound = 0x66,
+        system_chat_message = 0x67,
+        set_tab_list_header_and_footer = 0x68,
+        tag_query_response = 0x69,
+        pickup_item = 0x6A,
+        teleport_entity = 0x6B,
+        update_advancements = 0x6C,
+        update_attributes = 0x6D,
+        entity_effect = 0x6E,
+        update_recipes = 0x6F,
+        update_tags = 0x70,
+    };
+    pub const CB_ = serde.Struct(struct { // TODO: tbc here. its failing to build
+        // debug or releasefast but works on
+        // releasesmall
+        tag: Enum(VarU7, CBID),
+        data: Remaining(u8, .{}),
+    });
+    pub const CB = TaggedUnion(VarU7, union(CBID) {
         bundle_delimeter: void,
         spawn_entity: struct {
             entity_id: VarI32,
@@ -2388,41 +2391,48 @@ pub const P = struct {
             map_id: VarI32,
             scale: i8,
             locked: bool,
-            icons: ?PrefixedArray(VarI32, struct {
-                type: serde.MappedEnum(struct {
-                    pub const white_arrow = 0;
-                    pub const green_arrow = 1;
-                    pub const red_arrow = 2;
-                    pub const blue_arrow = 3;
-                    pub const white_cross = 4;
-                    pub const red_pointer = 5;
-                    pub const white_circle = 6;
-                    pub const small_white_circle = 7;
-                    pub const mansion = 8;
-                    pub const temple = 9;
-                    pub const white_banner = 10;
-                    pub const orange_banner = 11;
-                    pub const magenta_banner = 12;
-                    pub const light_blue_banner = 13;
-                    pub const yellow_banner = 14;
-                    pub const lime_banner = 15;
-                    pub const pink_banner = 16;
-                    pub const gray_banner = 17;
-                    pub const light_gray_banner = 18;
-                    pub const cyan_banner = 19;
-                    pub const purple_banner = 20;
-                    pub const blue_banner = 21;
-                    pub const brown_banner = 22;
-                    pub const green_banner = 23;
-                    pub const red_banner = 24;
-                    pub const black_banner = 25;
-                    pub const treasure_marker = 26;
-                }, VarI32, null),
-                x: i8,
-                z: i8,
-                direction: serde.Casted(i8, u4),
-                display_name: ?ChatString,
-            }, .{}),
+            icons: union(BooleanIds) {
+                const BooleanIds = enum(u8) { none = 0x00, some = 0x01 };
+                none: void,
+                some: PrefixedArray(VarI32, struct {
+                    type: serde.MappedEnum(struct {
+                        pub const white_arrow = 0;
+                        pub const green_arrow = 1;
+                        pub const red_arrow = 2;
+                        pub const blue_arrow = 3;
+                        pub const white_cross = 4;
+                        pub const red_pointer = 5;
+                        pub const white_circle = 6;
+                        pub const small_white_circle = 7;
+                        pub const mansion = 8;
+                        pub const temple = 9;
+                        pub const white_banner = 10;
+                        pub const orange_banner = 11;
+                        pub const magenta_banner = 12;
+                        pub const light_blue_banner = 13;
+                        pub const yellow_banner = 14;
+                        pub const lime_banner = 15;
+                        pub const pink_banner = 16;
+                        pub const gray_banner = 17;
+                        pub const light_gray_banner = 18;
+                        pub const cyan_banner = 19;
+                        pub const purple_banner = 20;
+                        pub const blue_banner = 21;
+                        pub const brown_banner = 22;
+                        pub const green_banner = 23;
+                        pub const red_banner = 24;
+                        pub const black_banner = 25;
+                        pub const treasure_marker = 26;
+                    }, VarI32, null),
+                    x: i8,
+                    z: i8,
+                    direction: serde.Casted(i8, u4),
+                    display_name: ?ChatString,
+                }, .{}),
+            },
+            // TODO: make a zig issue about a reduced version of this?
+            //     optional + prefixedarray + struct => llvm error
+            //icons: serde.Optional(PrefixedArray(VarI32, BlockEntity, .{})),
             properties: struct {
                 pub const RestSpec = serde.Struct(struct {
                     rows: u8,
@@ -2430,13 +2440,10 @@ pub const P = struct {
                     z: i8,
                     data: PrefixedArray(VarI32, u8, .{}),
                 });
-
                 columns: u8,
                 rest: RestSpec.UT,
-
                 pub const UT = ?@This();
                 pub const E = RestSpec.E || error{EndOfStream};
-
                 pub fn write(writer: anytype, in_: UT) !void {
                     if (in_) |in| {
                         try serde.Num(u8, .big).write(writer, in.columns);
@@ -3084,7 +3091,7 @@ pub const P = struct {
                     }
 
                     while (true) {
-                        var index: u8 = try reader.readByte();
+                        const index: u8 = try reader.readByte();
                         if (index == 0xFF) break;
                         if (entries[index]) |*existing_entry| {
                             EntrySpec.deinit(existing_entry, a);
@@ -3622,63 +3629,63 @@ pub const P = struct {
         )), .{}),
         update_tags: Tags,
     });
-    pub const SB = TaggedUnion(VarU7, union(PacketIds) {
-        pub const PacketIds = enum(u7) {
-            confirm_teleportation = 0x00,
-            query_block_entity_tag = 0x01,
-            change_difficulty = 0x02,
-            acknowledge_message = 0x03,
-            chat_command = 0x04,
-            chat_message = 0x05,
-            player_session = 0x06,
-            chunk_batch_received = 0x07,
-            client_status = 0x08,
-            client_information = 0x09,
-            command_suggestions_request = 0x0A,
-            acknowledge_configuration = 0x0B,
-            click_container_button = 0x0C,
-            click_container = 0x0D,
-            close_container = 0x0E,
-            plugin_message = 0x0F,
-            edit_book = 0x10,
-            query_entity_tag = 0x11,
-            interact = 0x12,
-            jigsaw_generate = 0x13,
-            keep_alive = 0x14,
-            lock_difficulty = 0x15,
-            set_player_position = 0x16,
-            set_player_position_and_rotation = 0x17,
-            set_player_rotation = 0x18,
-            set_player_on_ground = 0x19,
-            move_vehicle = 0x1A,
-            paddle_boat = 0x1B,
-            pick_item = 0x1C,
-            ping_request = 0x1D,
-            place_recipe = 0x1E,
-            player_abilities = 0x1F,
-            player_action = 0x20,
-            player_command = 0x21,
-            player_input = 0x22,
-            pong = 0x23,
-            change_recipe_book_settings = 0x24,
-            set_seen_recipe = 0x25,
-            rename_item = 0x26,
-            resource_pack_response = 0x27,
-            seen_advancements = 0x28,
-            select_trade = 0x29,
-            set_beacon_effect = 0x2A,
-            set_held_item = 0x2B,
-            program_command_block = 0x2C,
-            program_command_block_minecart = 0x2D,
-            set_creative_mode_slot = 0x2E,
-            program_jigsaw_block = 0x2F,
-            program_structure_block = 0x30,
-            update_sign = 0x31,
-            swing_arm = 0x32,
-            teleport_to_entity = 0x33,
-            use_item_on = 0x34,
-            use_item = 0x35,
-        };
+    pub const SBID = enum(u7) {
+        confirm_teleportation = 0x00,
+        query_block_entity_tag = 0x01,
+        change_difficulty = 0x02,
+        acknowledge_message = 0x03,
+        chat_command = 0x04,
+        chat_message = 0x05,
+        player_session = 0x06,
+        chunk_batch_received = 0x07,
+        client_status = 0x08,
+        client_information = 0x09,
+        command_suggestions_request = 0x0A,
+        acknowledge_configuration = 0x0B,
+        click_container_button = 0x0C,
+        click_container = 0x0D,
+        close_container = 0x0E,
+        plugin_message = 0x0F,
+        edit_book = 0x10,
+        query_entity_tag = 0x11,
+        interact = 0x12,
+        jigsaw_generate = 0x13,
+        keep_alive = 0x14,
+        lock_difficulty = 0x15,
+        set_player_position = 0x16,
+        set_player_position_and_rotation = 0x17,
+        set_player_rotation = 0x18,
+        set_player_on_ground = 0x19,
+        move_vehicle = 0x1A,
+        paddle_boat = 0x1B,
+        pick_item = 0x1C,
+        ping_request = 0x1D,
+        place_recipe = 0x1E,
+        player_abilities = 0x1F,
+        player_action = 0x20,
+        player_command = 0x21,
+        player_input = 0x22,
+        pong = 0x23,
+        change_recipe_book_settings = 0x24,
+        set_seen_recipe = 0x25,
+        rename_item = 0x26,
+        resource_pack_response = 0x27,
+        seen_advancements = 0x28,
+        select_trade = 0x29,
+        set_beacon_effect = 0x2A,
+        set_held_item = 0x2B,
+        program_command_block = 0x2C,
+        program_command_block_minecart = 0x2D,
+        set_creative_mode_slot = 0x2E,
+        program_jigsaw_block = 0x2F,
+        program_structure_block = 0x30,
+        update_sign = 0x31,
+        swing_arm = 0x32,
+        teleport_to_entity = 0x33,
+        use_item_on = 0x34,
+        use_item = 0x35,
+    };
+    pub const SB = TaggedUnion(VarU7, union(SBID) {
         confirm_teleportation: struct {
             teleport_id: VarI32,
         },
