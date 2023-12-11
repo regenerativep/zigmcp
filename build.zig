@@ -48,6 +48,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     main_tests.addModule("uuid6", uuid6_mod);
+    main_tests.addModule("mcp-generated", mcp_gen_mod);
 
     const run_main_tests = b.addRunArtifact(main_tests);
     const test_step = b.step("test", "Run library tests");

@@ -242,8 +242,8 @@ pub fn main() !void {
     try w.writeAll(
         \\    const fields = @typeInfo(@This()).Union.fields;
         \\
-        \\    pub fn fromId(id_: Id) @This() {
-        \\        var id = id_;
+        \\    pub fn fromId(id_: Id) ?@This() {
+        \\        var id: Id = id_;
         \\        return switch (id) {
         \\
     );
@@ -315,6 +315,7 @@ pub fn main() !void {
     }
 
     try w.writeAll(
+        \\            else => null,
         \\        };
         \\    }
         \\    
@@ -327,7 +328,7 @@ pub fn main() !void {
             try w.print(" " ** 12 ++ ".{s} => {},\n", .{ v.name, v.minStateId });
         } else {
             try w.print(
-                " " ** 12 ++ ".{s} => |d| {{\n" ++ (" " ** 16) ++ "var id = {};\n",
+                " " ** 12 ++ ".{s} => |d| {{\n" ++ (" " ** 16) ++ "var id: Id = {};\n",
                 .{ v.name, v.minStateId },
             );
             for (v.states, 0..) |sv, si| {

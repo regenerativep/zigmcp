@@ -280,10 +280,19 @@ pub fn handleClientbound(
                 defer ST.deinit(&packet, aa);
                 try stdout.writeByte('\n');
 
-                //if (v == .play) {
-                //    if (id == .chunk_data_and_update_light) {
-                //        try std.fs.cwd().writeFile("packet.bin", packet.chunk_data_and_update_light.data);
-                //        return;
+                //if (v == .configuration) {
+                //    if (id == .registry_data) {
+                //        {
+                //            var f = try std.fs.cwd().createFile("packet.bin", .{});
+                //            defer f.close();
+                //            try ST.write(f.writer(), packet);
+                //        }
+                //        {
+                //            var f = try std.fs.cwd().createFile("packet.txt", .{});
+                //            defer f.close();
+                //            try packet.registry_data.print(null, f.writer(), 0);
+                //        }
+                //        //return;
                 //    }
                 //}
             },

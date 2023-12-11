@@ -18,6 +18,12 @@ const Remaining = serde.Remaining;
 const VarInt = @import("varint.zig").VarInt;
 const nbt = @import("nbt.zig");
 
+const HeightMap = @import("chunk.zig").HeightMap;
+const ChunkSection = @import("chunk.zig").ChunkSection;
+const PalettedContainer = @import("chunk.zig").PalettedContainer;
+const BlockEntity = @import("chunk.zig").BlockEntity;
+const TOTAL_CHUNK_SECTIONS = @import("chunk.zig").TOTAL_CHUNK_SECTIONS;
+
 const generated = @import("mcp-generated");
 pub const Block = generated.Block;
 pub const BlockState = generated.BlockState;
@@ -28,6 +34,8 @@ pub const Effect = generated.Effect;
 const VarU7 = VarInt(u7); // always a single byte, but its still technically a varint in the protocol i guess
 const VarI32 = VarInt(i32);
 const VarI64 = VarInt(i64);
+
+const MaxNbtDepth = @import("main.zig").MaxNbtDepth;
 
 pub const ProtocolVersion = 764;
 pub const MCVersion = "1.20.2";
@@ -63,7 +71,7 @@ pub const Uuid = struct {
         assert(username.len <= 16);
         const ofp = "OfflinePlayer:";
         var buf = ofp.* ++ ([_]u8{undefined} ** 16);
-        @memcpy(buf[ofp.len..], username);
+        @memcpy(buf[ofp.len..][0..username.len], username);
         var uuid: UT = undefined;
         std.crypto.hash.Md5.hash(buf[0 .. ofp.len + username.len], &uuid.bytes, .{});
         uuid.setVersion(3);
@@ -75,21 +83,19 @@ pub const Uuid = struct {
 pub const ChatString = PString(262144);
 pub const Identifier = PString(32767);
 
-pub const MaxNbtDepth = 32;
-
 pub fn Registry(comptime name: []const u8, comptime Entry: type) type {
     return nbt.WithName(name, struct {
         type: nbt.Constant(nbt.String, name, serde.strEql),
-        value: []struct {
+        value: nbt.List(struct {
             name: nbt.String,
             id: i32,
             element: Entry,
-        },
+        }),
     });
 }
 
 pub const RegistryData = nbt.Named(null, struct {
-    trim_material: Registry("minecraft:trim_material", struct {
+    trim_material: ?Registry("minecraft:trim_material", struct {
         asset_name: nbt.String,
         ingredient: nbt.String,
         item_model_index: f32,
@@ -104,13 +110,13 @@ pub const RegistryData = nbt.Named(null, struct {
         },
         description: nbt.Dynamic(.any, MaxNbtDepth),
     }),
-    trim_pattern: Registry("minecraft:trim_pattern", struct {
+    trim_pattern: ?Registry("minecraft:trim_pattern", struct {
         asset_id: nbt.String,
         template_item: nbt.String,
         description: nbt.Dynamic(.any, MaxNbtDepth),
         decal: bool,
     }),
-    biome: Registry("minecraft:worldgen/biome", struct {
+    biome: ?Registry("minecraft:worldgen/biome", struct {
         has_precipitation: bool,
         temperature: f32,
         temperature_modifier: ?nbt.String,
@@ -149,7 +155,7 @@ pub const RegistryData = nbt.Named(null, struct {
             },
         },
     }),
-    chat_type: Registry("minecraft:chat_type", struct {
+    chat_type: ?Registry("minecraft:chat_type", struct {
         chat: Decoration,
         narration: Decoration,
 
@@ -163,7 +169,7 @@ pub const RegistryData = nbt.Named(null, struct {
             }),
         };
     }),
-    damage_type: Registry("minecraft:damage_type", struct {
+    damage_type: ?Registry("minecraft:damage_type", struct {
         message_id: nbt.String,
         scaling: nbt.StringEnum(struct {
             pub const never = "never";
@@ -186,7 +192,7 @@ pub const RegistryData = nbt.Named(null, struct {
             pub const intentional_game_design = "intentional_game_design";
         }),
     }),
-    dimension_type: Registry("minecraft:dimension_type", struct {
+    dimension_type: ?Registry("minecraft:dimension_type", struct {
         fixed_time: ?i64,
         has_skylight: bool,
         has_ceiling: bool,
@@ -328,8 +334,8 @@ pub const CommandNode = struct {
                 pub const UT = @This();
                 pub fn write(writer: anytype, in: @This()) !void {
                     try writer.writeByte(
-                        (if (in.min != min_value) 0b01 else 0) |
-                            (if (in.max != max_value) 0b10 else 0),
+                        (if (in.min != min_value) @as(u8, 0b01) else @as(u8, 0)) |
+                            (if (in.max != max_value) @as(u8, 0b10) else @as(u8, 0)),
                     );
                     if (in.min != min_value) try InnerSpec.write(writer, in.min);
                     if (in.max != max_value) try InnerSpec.write(writer, in.max);
@@ -548,17 +554,17 @@ pub const Slot = Optional(struct {
 
 test "protocol slot" {
     // https://wiki.vg/Slot_Data
-    try serde.doTest(Slot, &.{0x00}, null);
+    try serde.doTest(Slot, &.{0x00}, null, false);
     try serde.doTest(Slot, &.{ 0x01, 0x01, 0x01, 0x00 }, .{
         .item_id = 1,
         .item_count = 1,
         .data = null,
-    });
+    }, false);
     try serde.doTest(Slot, &.{ 0x01, 0x01, 0x01, 0x03, 0x12, 0x34, 0x56, 0x78 }, .{
         .item_id = 1,
         .item_count = 1,
         .data = .{ .int = @bitCast(@as(u32, 0x12345678)) },
-    });
+    }, false);
 }
 
 // TODO: make a custom type for this so it is more easily usable
@@ -738,22 +744,16 @@ pub const Particle = serde.Union(union(ParticleId) {
     item: Slot,
     vibration: struct {
         // no idea if there are other possible values for source type
-        const SourceSpec = serde.MappedEnum(struct {
+        const SourceSpec = serde.StringEnum(struct {
             pub const block = "minecraft:block";
             pub const entity = "minecraft:entity";
-            pub const other = null;
-        }, Identifier, (struct {
-            pub fn f(a: ?[]const u8, b: []const u8) bool {
-                return if (a == null) true else mem.eql(u8, a.?, b);
-            }
-        }).f);
+        }, Identifier);
         source: serde.Pass(SourceSpec, serde.Union(union(SourceSpec.UT) {
             block: Position,
             entity: struct {
                 id: VarI32,
                 eye_height: f32,
             },
-            other: void,
         })),
         ticks: VarI32,
     },
@@ -955,15 +955,6 @@ pub const WorldEvent = serde.Union(union(WorldEventId) {
     copper_remove_wax: I320,
     copper_scrape_oxidation: I320,
 });
-pub const BlockEntity = serde.Struct(struct {
-    xz: packed struct(u8) {
-        z: u4,
-        x: u4,
-    },
-    y: i16,
-    type: VarI32,
-    data: nbt.Named(null, nbt.Dynamic(.any, MaxNbtDepth)),
-});
 pub const LightLevels = serde.Struct(struct {
     sky_light_mask: BitSet,
     block_light_mask: BitSet,
@@ -978,397 +969,6 @@ pub const LightLevels = serde.Struct(struct {
         data: [2048]u8,
     }, .{}),
 });
-
-pub const HeightMap = struct {
-    pub const len = math.divCeil(usize, 256, @divTrunc(64, 9)) catch unreachable;
-    pub const ListSpec = serde.Struct(struct {
-        _len: serde.Constant(serde.Num(i32, .big), @intCast(len), null),
-        data: serde.Array([len]u64),
-    });
-
-    inner: ListSpec.UT,
-
-    pub const UT = @This();
-    pub const E = ListSpec.E;
-
-    pub fn write(writer: anytype, in: UT) !void {
-        try ListSpec.write(writer, in.inner);
-    }
-    pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
-        try ListSpec.read(reader, &out.inner, a);
-    }
-    pub fn size(self: UT) usize {
-        return ListSpec.size(self);
-    }
-    pub fn deinit(self: *UT, a: Allocator) void {
-        ListSpec.deinit(&self.inner, a);
-        self.* = undefined;
-    }
-
-    pub fn initAll(value: u9) Self {
-        var part: u64 = 0;
-        for (0..7) |_| {
-            part |= @as(u64, value);
-            part <<= 9;
-        }
-        part <<= 1;
-        var self: Self = undefined;
-        for (0..36) |i| self.inner.data[i] = part;
-        self.inner.data[36] = (part << (9 * 5)) >> (9 * 5);
-        return self;
-    }
-
-    const Self = @This();
-    pub fn set(self: *Self, x: u4, z: u4, value: u9) void {
-        return self.setIndex((@as(u8, z) << 4) + x, value);
-    }
-    pub fn get(self: *Self, x: u4, z: u4) u9 {
-        return self.getIndex((@as(u8, z) << 4) + x);
-    }
-
-    const mask_ = ~(~@as(u64, 0) << 9);
-    pub fn setIndex(self: *Self, index: u8, value: u9) void {
-        const shift = 9 * @as(std.math.Log2Int(u64), @intCast(index % 7)) + 1;
-        const mask = ~(mask_ << shift);
-        const long_ind = index / 7;
-        self.inner.data[long_ind] &= mask;
-        self.inner.data[long_ind] |= @as(u64, value) << shift;
-    }
-    pub fn getIndex(self: *Self, index: u8) u9 {
-        const shift = 9 * @as(std.math.Log2Int(u64), @intCast(index % 7)) + 1;
-        const long_ind = index / 7;
-        return @truncate(self.inner.data[long_ind] >> shift);
-    }
-};
-test "heightmap" {
-    var m = HeightMap.initAll(1);
-    for (0..256) |i| m.setIndex(@intCast(i), @intCast(i));
-    for (0..256) |i| try testing.expectEqual(@as(u9, @intCast(i)), m.getIndex(@intCast(i)));
-}
-
-pub const ChunkSection = serde.Struct(struct {
-    block_count: i16,
-    blocks: PalettedContainer(.block),
-    biomes: PalettedContainer(.biome),
-});
-
-pub fn PalettedContainer(comptime kind: enum { block, biome }) type {
-    return union(enum) {
-        pub const Count = switch (kind) {
-            .block => 4096,
-            .biome => 64,
-        };
-        pub const Index = switch (kind) {
-            .block => u12,
-            .biome => u6,
-        };
-        pub const Axis = switch (kind) {
-            .block => u4,
-            .biome => u2,
-        };
-        pub const Id = switch (kind) {
-            .block => BlockState.Id,
-            .biome => Biome.Id,
-        };
-        pub const IdBits = @as(comptime_int, @intCast(@typeInfo(Id).Int.bits));
-        pub const IndirectId = switch (kind) {
-            .block => u8,
-            .biome => u3,
-        };
-        pub const MaxIndirectBits = switch (kind) {
-            .block => 8,
-            .biome => 3,
-        };
-        pub const MaxDirectBits = switch (kind) {
-            .block => 16,
-            .biome => 8,
-        };
-        pub const MaxIndirectLongCount = math.divCeil(
-            usize,
-            Count,
-            @divTrunc(64, @typeInfo(IndirectId).Int.bits),
-        ) catch unreachable;
-        pub const MaxIndirectPaletteLength = math.maxInt(IndirectId) + 1;
-        pub const IndirectPaletteLen =
-            std.math.IntFittingRange(0, MaxIndirectPaletteLength);
-
-        pub inline fn axisToIndex(x: Axis, z: Axis, y: Axis) Index {
-            const one_shift: comptime_int = @intCast(@typeInfo(Axis).Int.bits);
-            return (@as(Index, y) << (one_shift * 2)) |
-                (@as(Index, z) << one_shift) |
-                @as(Index, x);
-        }
-        pub fn PackedArray(comptime max_bits: comptime_int) type {
-            return struct {
-                pub const MaxLongCount =
-                    math.divCeil(usize, Count, @divTrunc(64, max_bits)) catch
-                    unreachable;
-                pub const Bits = std.math.IntFittingRange(0, max_bits);
-                pub const Value =
-                    @Type(.{ .Int = .{ .signedness = .unsigned, .bits = max_bits } });
-                pub const LongIndex = std.math.IntFittingRange(0, MaxLongCount - 1);
-
-                pub inline fn longCount(
-                    bits: Bits,
-                ) std.math.IntFittingRange(0, MaxLongCount) {
-                    return @intCast(
-                        math.divCeil(usize, Count, @divTrunc(64, @as(usize, bits))) catch
-                            unreachable,
-                    );
-                }
-                pub fn longSlice(self: *@This()) []u64 {
-                    return self.data[0..@This().longCount(self.bits)];
-                }
-                pub fn constLongSlice(self: *const @This()) []const u64 {
-                    return self.data[0..@This().longCount(self.bits)];
-                }
-                pub inline fn longIndex(bits: Bits, index: Index) LongIndex {
-                    return @intCast(index / (64 / bits));
-                }
-                pub inline fn lowIndex(bits: Bits, index: Index) ShiftInt {
-                    return @intCast(index % (64 / bits));
-                }
-
-                bits: Bits,
-                data: [MaxLongCount]u64,
-
-                const ShiftInt = math.Log2Int(u64);
-
-                pub fn init(bits: Bits) @This() {
-                    return .{
-                        .bits = bits,
-                        .data = [_]u64{0} ** MaxLongCount,
-                    };
-                }
-
-                pub fn set(self: *@This(), index: Index, value: Value) void {
-                    return self.setInArray(self.bits, index, value);
-                }
-                pub inline fn setInArray(
-                    self: *@This(),
-                    bits: Bits,
-                    index: Index,
-                    value: Value,
-                ) void {
-                    const shift: ShiftInt = @intCast(lowIndex(bits, index) * bits);
-                    const mask = ~(~@as(u64, 0) << @as(ShiftInt, @intCast(bits)));
-                    const long_index = longIndex(bits, index);
-                    self.data[long_index] &= ~(mask << shift);
-                    self.data[long_index] |= @as(u64, value) << shift;
-                }
-                pub fn get(self: *const @This(), index: Index) Value {
-                    return self.getIntArray(self.bits, index);
-                }
-                pub inline fn getInArray(
-                    self: *const @This(),
-                    bits: Bits,
-                    index: Index,
-                ) Value {
-                    const shift: ShiftInt = @intCast(lowIndex(bits, index) * bits);
-                    const mask = ~(~@as(u64, 0) << @as(ShiftInt, @intCast(bits)));
-                    return @intCast(
-                        (self.data[longIndex(bits, index)] >> shift) & mask,
-                    );
-                }
-
-                pub fn changeBits(self: *@This(), target_bits: Bits) void {
-                    assert(target_bits <= max_bits);
-                    if (target_bits > self.bits) {
-                        var i: Index = Count - 1;
-                        while (true) {
-                            const val = self.getInArray(self.bits, i);
-                            self.setInArray(target_bits, i, val);
-                            if (i == 0) break;
-                            i -= 1;
-                        }
-                    } else {
-                        var i: Index = 0;
-                        while (true) {
-                            const val = self.getInArray(self.bits, i);
-                            self.setInArray(self.bits, i, 0);
-                            self.setInArray(target_bits, i, val);
-                            if (i == Count - 1) break;
-                            i += 1;
-                        }
-                    }
-                    self.bits = target_bits;
-                }
-            };
-        }
-
-        pub const IndirectData = PackedArray(MaxIndirectBits);
-        pub const PaletteData = std.BoundedArray(Id, MaxIndirectPaletteLength);
-        pub const DirectData = PackedArray(16);
-
-        single: Id,
-        indirect: struct {
-            palette: PaletteData,
-            data: IndirectData,
-        },
-        direct: DirectData,
-
-        pub const UT = @This();
-        pub const E = VarI32.E || error{
-            InvalidConstant,
-            EndOfStream,
-            InvalidBits,
-            InvalidCast,
-            InvalidLength,
-        };
-
-        const Self = @This();
-        pub fn upgrade(self: *Self) void {
-            switch (self.*) {
-                .single => |id| self.* = .{ .indirect = .{
-                    .palette = PaletteData.fromSlice(&.{id}) catch unreachable,
-                    .data = IndirectData.init(1),
-                } },
-                .indirect => |d| {
-                    var direct = DirectData.init(IdBits);
-                    for (0..Count) |i| {
-                        direct.set(@intCast(i), d.palette[d.data.get(@intCast(i))]);
-                    }
-                    self.* = .{ .direct = direct };
-                },
-                else => {},
-            }
-        }
-        pub fn set(self: *Self, x: Axis, z: Axis, y: Axis, value: Id) void {
-            const index = axisToIndex(x, z, y);
-            switch (self.*) {
-                .single => |id| if (value != id) {
-                    self.upgrade(); // upgrade to indirect
-                    const palette_id = self.indirect.palette.len;
-                    self.indirect.palette.appendAssumeCapacity(id);
-                    self.indirect.data.set(index, @intCast(palette_id));
-                },
-                .indirect => |*d| {
-                    const palette_id: IndirectPaletteLen =
-                        for (self.indirect.palette.slice(), 0..) |id, i|
-                        if (id == value)
-                            break @intCast(i)
-                        else
-                            self.indirect.palette.len;
-                    if (palette_id == self.indirect.palette.len) {
-                        self.indirect.palette.append(value) catch {
-                            self.upgrade(); // upgrade to direct
-                            self.direct.set(index, value);
-                            return;
-                        };
-                        if (self.palette_len > (1 << @as(IndirectPaletteLen, d.bits)))
-                            d.changeBits(d.bits + 1);
-                    }
-                    d.data.set(index, @intCast(palette_id));
-                },
-                .direct => |*d| {
-                    if (IdBits - @clz(value) > d.bits)
-                        d.changeBits(IdBits - @clz(value));
-                    d.set(index, value);
-                },
-            }
-        }
-        pub fn get(self: *Self, x: Axis, z: Axis, y: Axis) Id {
-            const index = axisToIndex(x, z, y);
-            return switch (self.*) {
-                .single => |id| id,
-                .indirect => |d| d.palette.get(d.data.get(index)),
-                .direct => |d| d.get(index),
-            };
-        }
-
-        pub fn write(writer: anytype, in: UT) !void {
-            switch (in) {
-                .single => |id| {
-                    try writer.writeByte(0);
-                    try VarI32.write(writer, @intCast(id));
-                    try VarI32.write(writer, 0);
-                },
-                .indirect => |d| {
-                    try writer.writeByte(d.data.bits);
-                    try VarI32.write(writer, @intCast(d.palette.len));
-                    for (d.palette.slice()) |item|
-                        try VarI32.write(writer, @intCast(item));
-                    const longs = d.data.longSlice();
-                    try VarI32.write(writer, @intCast(longs.len));
-                    for (longs) |item| try serde.Num(u64, .big).write(writer, item);
-                },
-                .direct => |d| {
-                    try writer.writeByte(d.bits);
-                    const longs = d.longSlice();
-                    try VarI32.write(writer, @intCast(longs.len));
-                    for (longs) |item| try serde.Num(u64, .big).write(writer, item);
-                },
-            }
-        }
-
-        pub fn read(reader: anytype, out: *UT, _: Allocator) !void {
-            var bits: u8 = undefined;
-            try serde.Num(u8, .big).read(reader, &bits, undefined);
-            switch (bits) {
-                0 => {
-                    out.* = .{ .single = undefined };
-                    try serde.Casted(VarI32, Id).read(reader, &out.single, undefined);
-                    try serde.Constant(VarI32, 0, null).read(reader, undefined, undefined);
-                },
-                1...MaxIndirectBits => {
-                    out.* = .{ .indirect = .{
-                        .palette = .{},
-                        .data = IndirectData.init(@intCast(bits)),
-                    } };
-                    try serde.Casted(VarI32, IndirectPaletteLen).read(
-                        reader,
-                        &out.indirect.palette.len,
-                        undefined,
-                    );
-                    for (out.indirect.palette.slice()) |*item|
-                        try serde.Casted(VarI32, Id).read(reader, item, undefined);
-
-                    var read_long_len: u32 = undefined;
-                    try serde.Casted(VarI32, u32).read(
-                        reader,
-                        &read_long_len,
-                        undefined,
-                    );
-                    for (out.indirect.data.longSlice()) |*item|
-                        try serde.Num(u64, .big).read(reader, item, undefined);
-                },
-                MaxIndirectBits + 1...MaxDirectBits => {
-                    var read_long_len: u32 = undefined;
-                    try serde.Casted(VarI32, u32).read(reader, &read_long_len, undefined);
-                    out.* = .{ .direct = DirectData.init(@intCast(bits)) };
-                    for (out.direct.longSlice()) |*item|
-                        try serde.Num(u64, .big).read(reader, item, undefined);
-                },
-                else => return error.InvalidBits,
-            }
-        }
-        pub fn deinit(self: *UT, _: Allocator) void {
-            self.* = undefined;
-        }
-        pub fn size(self: UT) usize {
-            switch (self) {
-                .single => |id| 1 + VarI32.size(@intCast(id)) + VarI32.size(0),
-                .indirect => |d| {
-                    const longs = d.data.longSlice();
-                    var total =
-                        1 + VarI32.size(@intCast(d.palette.len)) +
-                        VarI32.size(@intCast(longs.len));
-                    for (d.palette.slice()) |item|
-                        total += VarI32.size(@intCast(item));
-                    for (longs) |item|
-                        total += serde.Num(u64, .big).size(item);
-                    return total;
-                },
-                .direct => |d| {
-                    const longs = d.longSlice();
-                    var total = 1 + VarI32.size(@intCast(longs.len));
-                    for (longs) |item| total += serde.Num(u64, .big).size(item);
-                    return total;
-                },
-            }
-        }
-    };
-}
 
 pub const DimensionSpec = StringEnum(struct {
     pub const overworld = "minecraft:overworld";
@@ -1550,6 +1150,8 @@ pub const Tags = PrefixedArray(VarI32, struct {
         pub const item = "minecraft:item";
         pub const fluid = "minecraft:fluid";
         pub const entity_type = "minecraft:entity_type";
+        pub const damage_type = "minecraft:damage_type";
+        pub const biome = "minecraft:worldgen/biome";
         pub const game_event = "minecraft:game_event";
         pub const point_of_interest_type = "minecraft:point_of_interest_type";
         pub const painting_variant = "minecraft:painting_variant";
@@ -1809,8 +1411,8 @@ pub const C = struct {
         finish_configuration: void,
         keep_alive: i64,
         ping: i32,
-        //registry_data: RegistryData,
-        registry_data: nbt.Named(null, nbt.Dynamic(.any, MaxNbtDepth)),
+        registry_data: RegistryData,
+        //registry_data: nbt.Named(null, nbt.Dynamic(.any, MaxNbtDepth)),
         resource_pack: struct {
             url: PString(32767),
             hash: PString(40),
@@ -2251,7 +1853,65 @@ pub const P = struct {
         },
         entity_event: struct {
             entity_id: i32,
-            entity_status: i8,
+            entity_status: enum(i8) {
+                tipped_arrow_effect = 0,
+                reset_spawner_or_rabbit_rotated_jump = 1,
+                death_animation = 3,
+                attack_animation = 4,
+                tame_fail = 6,
+                tame_succeed = 7,
+                shake_off_water = 8,
+                finish_use = 9,
+                ignite_or_eat_grass = 10,
+                hold_poppy = 11,
+                villager_mate = 12,
+                villager_angry = 13,
+                villager_happy = 14,
+                witch_particles = 15,
+                cure_zombie_villager = 16,
+                firework_explosion = 17,
+                love = 18,
+                reset_squid = 19,
+                mob_explosion_particles = 20,
+                guardian_attack = 21,
+                enable_reduced_debug_screen = 22,
+                disable_reduced_debug_screen = 23,
+                op_permission_0 = 24,
+                op_permission_1 = 25,
+                op_permission_2 = 26,
+                op_permission_3 = 27,
+                op_permission_4 = 28,
+                shield_block = 29,
+                shield_break = 30,
+                pull_caught = 31,
+                armor_stand_hit = 32,
+                put_away_poppy = 34,
+                totem_animation = 35,
+                happy_dolphin = 38,
+                ravager_stunned = 39,
+                ocelot_tame_failed = 40,
+                ocelot_tame_succeeded = 41,
+                villager_raid_splash = 42,
+                player_raid_particles = 43,
+                fox_chew = 45,
+                portal_particles = 46,
+                equipment_break_main_hand = 47,
+                equipment_break_off_hand = 48,
+                equipment_break_head = 49,
+                equipment_break_chest = 50,
+                equipment_break_legs = 51,
+                equipment_break_feet = 52,
+                honey_slide = 53,
+                honey_fall = 54,
+                swap_hand_items = 55,
+                stop_shake_off_water = 56,
+                goat_lower_head = 58,
+                goat_stop_lower_head = 59,
+                death_smoke_particles = 60,
+                warden_tendril_shaking = 61,
+                warden_sonic_attack_animation = 62,
+                sniffer_digging = 63,
+            },
         },
         explosion: struct {
             position: V3(f64),
@@ -2348,7 +2008,7 @@ pub const P = struct {
             }),
             data: serde.ByteLimited(
                 VarI32,
-                Remaining(ChunkSection, .{ .est_size = 16 }),
+                Remaining(ChunkSection, .{ .est_size = TOTAL_CHUNK_SECTIONS }),
                 .{},
             ),
             block_entities: PrefixedArray(VarI32, BlockEntity, .{}),
@@ -2470,7 +2130,7 @@ pub const P = struct {
                     self_.* = undefined;
                 }
                 pub fn size(self_: UT) usize {
-                    return 1 + if (self_) |self| RestSpec.size(self) else 0;
+                    return 1 + if (self_) |self| RestSpec.size(self.rest) else 0;
                 }
             },
         },
@@ -2569,45 +2229,10 @@ pub const P = struct {
             message: PString(256),
             timestamp: i64,
             salt: i64,
-            previous_messages: PrefixedArray(VarI32, union(enum) {
-                // TODO: make this an OptionalUnion
-                pub const ArraySpec = serde.Array([256]u8);
-
-                message_id: VarI32.UT,
-                signature: ArraySpec.UT,
-
-                pub const UT = ?@This();
-                pub const E = ArraySpec.E || VarI32.E;
-
-                pub fn write(writer: anytype, in: UT) !void {
-                    switch (in) {
-                        .message_id => |id| try VarI32.write(writer, id + 1),
-                        .signature => |sig| {
-                            try VarI32.write(writer, 0);
-                            try ArraySpec.write(writer, sig);
-                        },
-                    }
-                }
-                pub fn read(reader: anytype, out: *UT, _: Allocator) !void {
-                    var message_id: VarI32.UT = undefined;
-                    try VarI32.read(reader, &message_id, undefined);
-                    if (message_id == 0) {
-                        out.* = .{ .signature = undefined };
-                        try ArraySpec.read(reader, &out.*.?.signature, undefined);
-                    } else {
-                        out.* = .{ .message_id = message_id - 1 };
-                    }
-                }
-                pub fn deinit(self: *UT, _: Allocator) void {
-                    self.* = undefined;
-                }
-                pub fn size(self: UT) usize {
-                    return switch (self) {
-                        .message_id => |id| VarI32.size(id + 1),
-                        .signature => |sig| VarI32.size(0) + ArraySpec.size(sig),
-                    };
-                }
-            }, .{ .max = 20 }),
+            previous_messages: PrefixedArray(VarI32, serde.OptionalUnion(
+                PlusOne(serde.ConstantOptional(VarI32, 0, null)),
+                [256]u8,
+            ), .{ .max = 20 }),
             unsigned_content: ?ChatString,
             filter: serde.TaggedUnion(VarU7, union(FilterType) {
                 pub const FilterType = enum(u7) {
@@ -2634,12 +2259,12 @@ pub const P = struct {
         player_info_remove: PrefixedArray(VarI32, Uuid, .{}),
         player_info_update: struct {
             pub const ActionsSpec = serde.Spec(packed struct(u8) {
-                add_player: bool,
-                initialize_chat: bool,
-                update_gamemode: bool,
-                update_listed: bool,
-                update_latency: bool,
-                update_display_name: bool,
+                add_player: bool = false,
+                initialize_chat: bool = false,
+                update_gamemode: bool = false,
+                update_listed: bool = false,
+                update_latency: bool = false,
+                update_display_name: bool = false,
                 _u: u2 = 0,
             });
             pub const AddPlayerSpec = serde.Struct(struct {
@@ -2657,17 +2282,17 @@ pub const P = struct {
             pub const UpdateDisplayNameSpec = serde.Optional(ChatString);
             pub const PlayerAction = struct {
                 uuid: Uuid.UT,
-                add_player: ?AddPlayerSpec.UT,
-                initialize_chat: ?InitializeChatSpec.UT,
-                update_gamemode: ?VarI32.UT,
-                update_listed: ?bool,
-                update_latency: ?VarI32.UT,
-                update_display_name: ?UpdateDisplayNameSpec.UT,
+                add_player: ?AddPlayerSpec.UT = null,
+                initialize_chat: ?InitializeChatSpec.UT = null,
+                update_gamemode: ?VarI32.UT = null,
+                update_listed: ?bool = null,
+                update_latency: ?VarI32.UT = null,
+                update_display_name: ?UpdateDisplayNameSpec.UT = null,
             };
 
             pub const UT = struct {
                 actions: ActionsSpec.UT,
-                player_actions: []PlayerAction,
+                player_actions: []const PlayerAction,
             };
             pub const E = ActionsSpec.E || AddPlayerSpec.E ||
                 InitializeChatSpec.E || UpdateDisplayNameSpec.E || VarI32.E ||
@@ -2697,9 +2322,9 @@ pub const P = struct {
                 try ActionsSpec.read(reader, &out.actions, undefined);
                 var len: usize = undefined;
                 try serde.Casted(VarI32, usize).read(reader, &len, undefined);
-                out.player_actions = try a.alloc(PlayerAction, len);
-                errdefer a.free(out.player_actions);
-                for (out.player_actions, 0..) |*player_action, i| {
+                const actions = try a.alloc(PlayerAction, len);
+                errdefer a.free(actions);
+                for (actions, 0..) |*player_action, i| {
                     try Uuid.read(reader, &player_action.uuid, undefined);
                     errdefer {
                         var j = i;
@@ -2709,7 +2334,7 @@ pub const P = struct {
                             inline while (k > 0) {
                                 k -= 1;
                                 const pair = action_specs[k];
-                                if (@field(out.player_actions[j], pair[0])) |*item| {
+                                if (@field(actions[j], pair[0])) |*item| {
                                     pair[1].deinit(item, a);
                                 }
                             }
@@ -2722,7 +2347,7 @@ pub const P = struct {
                                 inline while (k > 0) {
                                     k -= 1;
                                     const pair_e = action_specs[k];
-                                    if (@field(out.player_actions[j], pair_e[0])) |*item| {
+                                    if (@field(actions[j], pair_e[0])) |*item| {
                                         pair_e[1].deinit(item, a);
                                     }
                                 }
@@ -2734,6 +2359,7 @@ pub const P = struct {
                         }
                     }
                 }
+                out.player_actions = actions;
             }
             pub fn deinit(self: *UT, a: Allocator) void {
                 var i = self.player_actions.len;
@@ -2744,7 +2370,7 @@ pub const P = struct {
                         j -= 1;
                         const pair = action_specs[j];
                         if (@field(self.player_actions[i], pair[0])) |*item| {
-                            pair[1].deinit(item, a);
+                            pair[1].deinit(@constCast(item), a);
                         }
                     }
                 }
@@ -3121,7 +2747,7 @@ pub const P = struct {
                     self.* = undefined;
                 }
                 pub fn size(self: UT) usize {
-                    var total = 1;
+                    var total: usize = 1;
                     for (self) |entry| total += 1 + EntrySpec.size(entry.data);
                     return total;
                 }
@@ -3151,6 +2777,7 @@ pub const P = struct {
                     has_another_entry: bool,
                 });
                 const Entry = struct {
+                    // TODO: bad naming
                     slot: EquipmentSlot,
                     item: Slot.UT,
                 };
@@ -3160,9 +2787,9 @@ pub const P = struct {
                     for (in, 0..) |entry, i| {
                         try EquipmentSlotSentinelSpec.write(writer, .{
                             .slot = entry.slot,
-                            .has_another_entry = i == entry.len - 1,
+                            .has_another_entry = i == in.len - 1,
                         });
-                        try Slot.write(writer, entry.slot);
+                        try Slot.write(writer, entry.item);
                     }
                 }
                 pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
@@ -3198,7 +2825,7 @@ pub const P = struct {
                 }
                 pub fn size(self: UT) usize {
                     var total: usize = 0;
-                    for (self) |entry| total += 1 + Slot.size(entry.slot);
+                    for (self) |entry| total += 1 + Slot.size(entry.item);
                     return total;
                 }
             },
@@ -4027,3 +3654,33 @@ pub const P = struct {
         },
     });
 };
+
+test "chunk packet" {
+    const chunk = @import("chunk.zig").Column.initFlat();
+    try serde.doTestOnValue(P.CB, .{
+        .chunk_data_and_update_light = .{
+            .chunk_x = 0,
+            .chunk_z = 10,
+            .heightmaps = .{
+                .motion_blocking = chunk.createHeightMap(.motion_blocking),
+                .world_surface = chunk.createHeightMap(.world_surface),
+            },
+            .data = &chunk.sections,
+            .block_entities = &.{},
+            .light_levels = .{
+                .sky_light_mask = &([_]i64{0} **
+                    ((TOTAL_CHUNK_SECTIONS + 2 + 63) / 64)),
+                .block_light_mask = &([_]i64{0} **
+                    ((TOTAL_CHUNK_SECTIONS + 2 + 63) / 64)),
+                .empty_sky_light_mask = &([_]i64{
+                    @bitCast(@as(u64, math.maxInt(i64))),
+                } ** ((TOTAL_CHUNK_SECTIONS + 2 + 63) / 64)),
+                .empty_block_light_mask = &([_]i64{
+                    @bitCast(@as(u64, math.maxInt(u64))),
+                } ** ((TOTAL_CHUNK_SECTIONS + 2 + 63) / 64)),
+                .sky_lights = &.{},
+                .block_lights = &.{},
+            },
+        },
+    }, true);
+}

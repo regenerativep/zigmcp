@@ -7,6 +7,13 @@ const assert = std.debug.assert;
 
 const serde = @import("serde.zig");
 
+pub fn isString(comptime T: type) bool {
+    return switch (T) {
+        []const u8, []u8 => true,
+        else => false,
+    };
+}
+
 pub const Tag = enum(u8) {
     end = 0,
     byte = 1,
@@ -24,7 +31,7 @@ pub const Tag = enum(u8) {
 
     pub const E = error{InvalidTag};
     pub fn fromInt(val: anytype) E!Tag {
-        //errdefer std.debug.print("\ngot val {}\n", .{val});
+        errdefer std.debug.print("\ngot val {}\n", .{val});
         if (val >= 0 and val <= 12)
             return @enumFromInt(val)
         else
@@ -95,7 +102,6 @@ pub fn WithName(comptime name: []const u8, comptime T: type) type {
 }
 
 pub fn Compound(comptime T: type) type {
-    const info = @typeInfo(T).Struct;
     return struct {
         pub const specs = serde.StructSpecs(Spec, T);
         pub const UT = serde.StructUT(T, &specs);
@@ -108,9 +114,9 @@ pub fn Compound(comptime T: type) type {
         };
 
         pub fn write(writer: anytype, in: UT) !void {
-            inline for (info.fields, 0..) |field, i| {
+            inline for (utinfo.fields, 0..) |field, i| blk: {
                 if (@typeInfo(field.type) == .Optional) {
-                    if (@field(in, field.name) == null) continue;
+                    if (@field(in, field.name) == null) break :blk;
                 }
                 const d = if (@typeInfo(field.type) == .Optional)
                     @field(in, field.name).?
@@ -125,14 +131,14 @@ pub fn Compound(comptime T: type) type {
                 });
                 try specs[i].write(writer, d);
             }
-            try NamedTag.write(writer, .{ .tag = .end, .name = "" });
+            try writer.writeByte(@intFromEnum(Tag.end));
         }
         pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
             var written = std.StaticBitSet(specs.len).initEmpty();
             var must_write = comptime blk: {
                 var s = std.StaticBitSet(specs.len).initEmpty();
-                inline for (specs, 0..) |spec, i| {
-                    if (@typeInfo(spec.UT) == .Optional) s.set(i);
+                inline for (utinfo.fields, 0..) |field, i| {
+                    if (@typeInfo(field.type) == .Optional) s.set(i);
                 }
                 break :blk s;
             };
@@ -159,11 +165,18 @@ pub fn Compound(comptime T: type) type {
                 try NamedTag.read(reader, &named_tag, a);
                 defer NamedTag.deinit(&named_tag, a);
                 if (named_tag.tag == .end) {
-                    if (must_write.count() < specs.len)
-                        return error.MissingFields
-                    else
+                    if (must_write.count() < specs.len) {
+                        //inline for (utinfo.fields, 0..) |field, i| {
+                        //    if (!must_write.isSet(i)) {
+                        //        std.debug.print("missing {s}\n", .{field.name});
+                        //    }
+                        //}
+                        return error.MissingFields;
+                    } else {
                         break;
+                    }
                 }
+                //std.debug.print("read compound field \"{s}\"\n", .{named_tag.name});
                 inline for (utinfo.fields, specs, 0..) |field, spec, i| {
                     const name = if (@hasDecl(spec, "Name")) spec.Name else field.name;
                     if (mem.eql(u8, name, named_tag.name)) {
@@ -171,13 +184,18 @@ pub fn Compound(comptime T: type) type {
                         const d: *spec.UT =
                             if (@typeInfo(field.type) == .Optional)
                         iblk: {
+                            // TODO: pointer optionals mess this up :( figure out the
+                            //     other places where its messed up
+                            if (@typeInfo(spec.UT) == .Pointer)
+                                break :iblk @as(*spec.UT, @ptrCast(&@field(out, field.name)));
                             @field(out, field.name) = @as(spec.UT, undefined);
                             break :iblk &@field(out, field.name).?;
                         } else &@field(out, field.name);
 
                         if (@hasDecl(spec, "NbtTag")) {
-                            if (named_tag.tag != spec.NbtTag)
+                            if (named_tag.tag != spec.NbtTag) {
                                 return error.InvalidTag;
+                            }
                             try spec.read(reader, d, a);
                         } else {
                             try spec.read(reader, d, a, named_tag.tag);
@@ -205,23 +223,21 @@ pub fn Compound(comptime T: type) type {
         }
         pub fn size(self: UT) usize {
             var total: usize = 1;
-            inline for (utinfo.fields, 0..) |field, i| {
+            inline for (utinfo.fields, 0..) |field, i| blk: {
                 if (@typeInfo(field.type) == .Optional) {
-                    if (@field(self, field.name) == null) continue;
+                    if (@field(self, field.name) == null) break :blk;
                 }
                 const d = if (@typeInfo(field.type) == .Optional)
                     @field(self, field.name).?
                 else
                     @field(self, field.name);
-                total +=
-                    NamedTag.size(.{
+                total += NamedTag.size(.{
                     .tag = specs[i].getTag(d),
                     .name = if (@hasDecl(specs[i], "Name"))
                         specs[i].Name
                     else
                         field.name,
-                }) +
-                    specs[i].size(d);
+                }) + specs[i].size(d);
             }
             return total;
         }
@@ -303,7 +319,10 @@ pub fn List(comptime T: type) type {
 
 pub fn tagFromType(comptime T: type) Tag {
     switch (@typeInfo(T)) {
-        .Struct => return .compound,
+        .Struct => return if (@hasDecl(T, "NbtTag"))
+            T.NbtTag
+        else
+            .compound,
         .Bool => return .byte,
         .Int => |info| if (info.signedness == .signed) switch (info.bits) {
             8 => return .byte,
@@ -318,7 +337,7 @@ pub fn tagFromType(comptime T: type) Tag {
             else => {},
         },
         .Pointer => |info| {
-            if (std.meta.trait.isZigString(T)) {
+            if (isString(T)) {
                 return .string;
             }
             const child_info = @typeInfo(info.child);
@@ -362,6 +381,13 @@ pub fn Wrap(comptime ST: type, comptime tag: Tag) type {
         pub fn getTag(_: ST.UT) Tag {
             return tag;
         }
+    };
+}
+
+pub fn Optional(comptime T: type) type {
+    return struct {
+        pub const IsOptional = {};
+        pub usingnamespace Spec(T);
     };
 }
 
@@ -544,17 +570,18 @@ pub const DynamicValue = union(Tag) {
                 try writer.print("{} entries\n", .{d.len});
                 try dpthIdt(writer, depth);
                 try writer.writeAll("{\n");
-                for (if (d.len > 20) d[0..20] else d) |item| {
+                //for (if (d.len > 20) d[0..20] else d) |item| {
+                for (d) |item| {
                     try dpthIdt(writer, depth + 1);
                     try writer.print(
                         "{s}(None): {}\n",
                         .{ tagFromType(@TypeOf(item)).toString(), item },
                     );
                 }
-                if (d.len > 20) {
-                    try dpthIdt(writer, depth + 1);
-                    try writer.writeAll("...\n");
-                }
+                //if (d.len > 20) {
+                //    try dpthIdt(writer, depth + 1);
+                //    try writer.writeAll("...\n");
+                //}
                 try dpthIdt(writer, depth);
                 try writer.writeAll("}\n");
             },
@@ -563,13 +590,14 @@ pub const DynamicValue = union(Tag) {
                 try writer.print("{} entries\n", .{d.len});
                 try dpthIdt(writer, depth);
                 try writer.writeAll("{\n");
-                for (if (d.len > 20) d[0..20] else d) |item| {
+                //for (if (d.len > 20) d[0..20] else d) |item| {
+                for (d) |item| {
                     try DynamicValue.print(item, null, writer, depth + 1);
                 }
-                if (d.len > 20) {
-                    try dpthIdt(writer, depth + 1);
-                    try writer.writeAll("...\n");
-                }
+                //if (d.len > 20) {
+                //    try dpthIdt(writer, depth + 1);
+                //    try writer.writeAll("...\n");
+                //}
                 try dpthIdt(writer, depth);
                 try writer.writeAll("}\n");
             },
@@ -750,6 +778,7 @@ pub fn Multiple(comptime T: type) type {
                         &@field(out, @tagName(v)),
                         a,
                     );
+                    return;
                 },
             }
             return error.InvalidTag;
@@ -810,7 +839,9 @@ pub fn Named(comptime name: ?[]const u8, comptime T: type) type {
                 }
             };
             if (@hasDecl(InnerSpec, "NbtTag")) {
-                if (tag != InnerSpec.NbtTag) return error.InvalidTag;
+                if (tag != InnerSpec.NbtTag) {
+                    return error.InvalidTag;
+                }
                 try InnerSpec.read(reader, out, a);
             } else {
                 try InnerSpec.read(reader, out, a, tag);
@@ -854,9 +885,9 @@ pub fn Constant(
         }
         pub fn deinit(_: *UT, _: Allocator) void {}
         pub fn size(_: UT) usize {
-            return 0;
+            return InnerSpec.size(value);
         }
-        pub fn getTag(_: UT) usize {
+        pub fn getTag(_: UT) Tag {
             return InnerSpec.getTag(value);
         }
     };
@@ -866,14 +897,15 @@ pub fn Spec(comptime T: type) type {
     return switch (@typeInfo(T)) {
         .Bool => Bool,
         .Pointer => |info| {
-            if (std.meta.trait.isZigString(T)) return String;
+            if (isString(T))
+                return String;
             const child_info = @typeInfo(info.child);
             if (child_info == .Int and child_info.Int.bits != 16)
                 return TypedList(T);
             return List(info.child);
         },
         .Int, .Float => Num(T),
-        .Optional => |info| Spec(info.child),
+        .Optional => |info| Optional(Spec(info.child)),
         .Struct => {
             inline for (.{ "read", "write", "deinit", "size" }) |n| {
                 if (!@hasDecl(T, n)) return Compound(T);
@@ -886,6 +918,51 @@ pub fn Spec(comptime T: type) type {
 
 const testing = std.testing;
 
+pub fn doDynamicTestOnValue(
+    comptime ST: type,
+    value: ST.UT,
+    comptime named: bool,
+    comptime check_allocations: bool,
+) !void {
+    var writebuf = std.ArrayList(u8).init(testing.allocator);
+    defer writebuf.deinit();
+    try ST.write(writebuf.writer(), value);
+
+    var stream = std.io.fixedBufferStream(writebuf.items);
+    var result: ST.UT = undefined;
+    try ST.read(stream.reader(), &result, testing.allocator);
+    defer ST.deinit(&result, testing.allocator);
+
+    {
+        errdefer std.debug.print("\ngot {any}\n", .{result});
+        try testing.expectEqualDeep(value, result);
+    }
+    try testing.expectEqual(writebuf.items.len, ST.size(result));
+
+    const DynamicST = if (named)
+        Named(null, Dynamic(.any, @import("main.zig").MaxNbtDepth))
+    else
+        Dynamic(.compound, @import("main.zig").MaxNbtDepth);
+    var dynamic_result: DynamicST.UT = undefined;
+    stream = std.io.fixedBufferStream(writebuf.items);
+    try DynamicST.read(stream.reader(), &dynamic_result, testing.allocator);
+    defer DynamicST.deinit(&dynamic_result, testing.allocator);
+    try testing.expectEqual(writebuf.items.len, DynamicST.size(dynamic_result));
+
+    if (check_allocations) {
+        testing.checkAllAllocationFailures(testing.allocator, (struct {
+            pub fn read(allocator: Allocator, data: []const u8) !void {
+                var stream_ = std.io.fixedBufferStream(data);
+                var r: ST.UT = undefined;
+                try ST.read(stream_.reader(), &r, allocator);
+                ST.deinit(&r, allocator);
+            }
+        }).read, .{writebuf.items}) catch |e| {
+            if (e != error.SwallowedOutOfMemoryError) return e;
+        };
+    }
+}
+
 test "named tags" {
     try serde.doTest(
         NamedTag,
@@ -894,6 +971,7 @@ test "named tags" {
             .name = "test",
             .tag = .byte_array,
         },
+        true,
     );
 }
 
@@ -906,6 +984,7 @@ test "test.nbt" {
             0x09, 0x42, 0x61, 0x6e, 0x61, 0x6e, 0x72, 0x61, 0x6d, 0x61, 0x00,
         },
         .{ .name = "Bananrama" },
+        true,
     );
 }
 
@@ -1052,5 +1131,5 @@ test "bigtest.nbt, dynamic" {
     try ST.write(writebuf.writer(), result);
     try testing.expectEqualSlices(u8, buf, writebuf.items);
 
-    try DynamicValue.print(result, "Level", std.io.getStdErr().writer(), 0);
+    //try DynamicValue.print(result, "Level", std.io.getStdErr().writer(), 0);
 }

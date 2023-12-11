@@ -96,10 +96,11 @@ pub fn builtinField(from: anytype, comptime T: type) @TypeOf(from) {
         std.builtin.Type.StructField => .{
             .name = from.name,
             .type = T,
-            .default_value = if (@typeInfo(T) == .Optional)
-                @as(?*const anyopaque, @ptrCast(&@as(T, null)))
-            else
-                null,
+            .default_value = switch (@typeInfo(T)) {
+                .Optional => &@as(T, null),
+                .Void => &{},
+                else => null,
+            },
             .is_comptime = from.is_comptime,
             .alignment = @alignOf(T),
         },
@@ -120,10 +121,12 @@ pub fn StructUT(
 ) type {
     const ifields = std.meta.fields(T);
     var fields: [ifields.len]BuiltinFieldType(T) = undefined;
-    inline for (&fields, ifields, 0..) |*field, ifield, i| {
+    inline for (&fields, ifields, specs) |*field, ifield, spec| {
         field.* = builtinField(
             ifield,
-            if (@typeInfo(T) == .Enum) void else specs[i].UT,
+            if (@typeInfo(T) == .Enum)
+                void
+            else if (@hasDecl(spec, "IsOptional")) ?spec.UT else spec.UT,
         );
     }
     return switch (@typeInfo(T)) {
@@ -162,6 +165,13 @@ pub fn Struct(comptime T: type) type {
         }
         pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
             inline for (info.fields, 0..) |field, i| {
+                errdefer {
+                    comptime var j = i;
+                    inline while (j > 0) {
+                        j -= 1;
+                        specs[j].deinit(&@field(out, info.fields[j].name), a);
+                    }
+                }
                 try specs[i].read(reader, &@field(out, field.name), a);
             }
         }
@@ -625,9 +635,13 @@ pub fn Remaining(comptime T: type, comptime opts: struct {
                         }
                     }
                     const d = try arr.addOne(a);
-                    errdefer arr.items.len -= 1;
+                    const last_count = lr.bytes_left;
+                    // should not read anything if there is nothing left
                     ElemSpec.read(reader, d, a) catch |e| {
-                        if (e == error.EndOfStream) break else return e;
+                        arr.items.len -= 1;
+                        if (e == error.EndOfStream and last_count == lr.bytes_left)
+                            break;
+                        return e;
                     };
                 }
             }
@@ -660,7 +674,7 @@ pub fn ByteLimited(comptime I: type, comptime T: type, comptime opts: struct {
         pub const E = ListSpec.E || LenSpec.E || error{ InvalidLength, EndOfStream };
 
         pub fn write(writer: anytype, in: UT) !void {
-            try LenSpec.write(writer, @intCast(in.len));
+            try LenSpec.write(writer, @intCast(ListSpec.size(in)));
             try ListSpec.write(writer, in);
         }
         pub fn read(reader_: anytype, out: *UT, a: Allocator) !void {
@@ -674,15 +688,42 @@ pub fn ByteLimited(comptime I: type, comptime T: type, comptime opts: struct {
             }
             var lr = std.io.limitedReader(reader_, len);
             try ListSpec.read(lr.reader(), out, a);
+            errdefer ListSpec.deinit(out, a);
             try lr.reader().skipBytes(lr.bytes_left, .{});
         }
         pub fn deinit(self: *UT, a: Allocator) void {
             ListSpec.deinit(self, a);
         }
         pub fn size(self: UT) usize {
-            return LenSpec.size(@intCast(self.len)) + ListSpec.size(self);
+            const payload_byte_len = ListSpec.size(self);
+            return LenSpec.size(@intCast(payload_byte_len)) + payload_byte_len;
         }
     };
+}
+
+test "byte limited" {
+    try doTestOnValue(
+        PrefixedArray(u8, PrefixedArray(u8, u8, .{}), .{}),
+        &.{
+            &.{ 0, 1, 2, 3 },
+            &.{ 4, 5, 6 },
+            &.{ 7, 8 },
+            &.{ 9, 10, 11, 12, 13, 14, 15, 16, 17 },
+            &.{ 18, 19 },
+        },
+        true,
+    );
+    try doTestOnValue(
+        ByteLimited(u16, Remaining(PrefixedArray(u8, u8, .{}), .{}), .{}),
+        &.{
+            &.{ 0, 1, 2, 3 },
+            &.{ 4, 5, 6 },
+            &.{ 7, 8 },
+            &.{ 9, 10, 11, 12, 13, 14, 15, 16, 17 },
+            &.{ 18, 19 },
+        },
+        true,
+    );
 }
 
 /// backing int probably needs to be bit width multiple of 8
@@ -696,7 +737,7 @@ pub fn Packed(comptime T: type, comptime endian: std.builtin.Endian) type {
         pub const E = error{EndOfStream};
 
         pub fn write(writer: anytype, in: UT) !void {
-            try writer.writeInt(@as(Backing, @bitCast(in)), endian);
+            try writer.writeInt(Backing, @bitCast(in), endian);
         }
         pub fn read(reader: anytype, out: *UT, _: Allocator) !void {
             out.* = @bitCast(try reader.readInt(Backing, endian));
@@ -784,7 +825,7 @@ pub fn Constant(
         }
         pub fn deinit(_: *UT, _: Allocator) void {}
         pub fn size(_: UT) usize {
-            return 0;
+            return InnerSpec.size(value);
         }
     };
 }
@@ -894,10 +935,10 @@ pub fn Casted(comptime T: type, comptime Target: type) type {
 }
 
 test "serde casted" {
-    try doTest(Casted(i16, u8), &.{ 0x00, 0x20 }, 0x20);
+    try doTest(Casted(i16, u8), &.{ 0x00, 0x20 }, 0x20, false);
 }
 test "serde numoffset" {
-    try doTest(NumOffset(i16, 1), &.{ 0x00, 0x20 }, 0x1F);
+    try doTest(NumOffset(i16, 1), &.{ 0x00, 0x20 }, 0x1F, false);
 }
 
 pub fn BitCasted(comptime T: type, comptime Target: type) type {
@@ -941,7 +982,12 @@ pub fn Spec(comptime T: type) type {
     };
 }
 
-pub fn doTest(comptime ST: type, buf: []const u8, expected: ST.UT) !void {
+pub fn doTest(
+    comptime ST: type,
+    buf: []const u8,
+    expected: ST.UT,
+    comptime check_allocations: bool,
+) !void {
     var reader = std.io.fixedBufferStream(buf);
     var result: ST.UT = undefined;
     try ST.read(reader.reader(), &result, testing.allocator);
@@ -954,43 +1000,87 @@ pub fn doTest(comptime ST: type, buf: []const u8, expected: ST.UT) !void {
     defer writebuf.deinit();
     try ST.write(writebuf.writer(), result);
     try testing.expectEqualSlices(u8, buf, writebuf.items);
+
+    if (check_allocations) {
+        testing.checkAllAllocationFailures(testing.allocator, (struct {
+            pub fn read(allocator: Allocator, data: []const u8) !void {
+                var stream = std.io.fixedBufferStream(data);
+                var r: ST.UT = undefined;
+                try ST.read(stream.reader(), &r, allocator);
+                ST.deinit(&r, allocator);
+            }
+        }).read, .{buf}) catch |e| {
+            if (e != error.SwallowedOutOfMemoryError) return e;
+        };
+    }
+}
+pub fn doTestOnValue(
+    comptime ST: type,
+    value: ST.UT,
+    comptime check_allocations: bool,
+) !void {
+    var writebuf = std.ArrayList(u8).init(testing.allocator);
+    defer writebuf.deinit();
+    try ST.write(writebuf.writer(), value);
+    //if (writebuf.items.len >= 416)
+    //    std.debug.print("\n{any}\n", .{@as([]const u8, writebuf.items[288..416])});
+
+    var stream = std.io.fixedBufferStream(writebuf.items);
+    var result: ST.UT = undefined;
+    try ST.read(stream.reader(), &result, testing.allocator);
+    defer ST.deinit(&result, testing.allocator);
+
+    {
+        errdefer std.debug.print("\ngot {any}\n", .{result});
+        try testing.expectEqualDeep(value, result);
+    }
+    try testing.expectEqual(writebuf.items.len, ST.size(result));
+
+    if (check_allocations) {
+        testing.checkAllAllocationFailures(testing.allocator, (struct {
+            pub fn read(allocator: Allocator, data: []const u8) !void {
+                var stream_ = std.io.fixedBufferStream(data);
+                var r: ST.UT = undefined;
+                try ST.read(stream_.reader(), &r, allocator);
+                ST.deinit(&r, allocator);
+            }
+        }).read, .{writebuf.items}) catch |e| {
+            if (e != error.SwallowedOutOfMemoryError) return e;
+        };
+    }
 }
 
 test "serde" {
-    try doTest(
-        Spec(struct {
-            const E = enum(u8) { A = 0x00, B = 0x05, C = 0x02 };
-            a: i32,
-            b: struct {
-                c: bool,
-                d: u8,
-                e: Num(u16, .little),
-            },
-            c: E,
-            d: union(E) {
-                A: bool,
-                B: u8,
-                C: Num(u16, .little),
-            },
-            e: PrefixedArray(Num(u16, .big), struct {
-                a: enum(u8) { f = 0x00, g = 0x01, h = 0x02 },
-                b: i8,
-            }, .{}),
-        }),
-        &.{
-            0x00, 0x00, 0x01, 0x02, 0x01, 0x08, 0x10, 0x00, 0x02, 0x05, 0x00,
-            0x00, 0x03, 0x02, 0x03, 0x02, 0x05, 0x01, 0x06,
+    try doTest(Spec(struct {
+        const E = enum(u8) { A = 0x00, B = 0x05, C = 0x02 };
+        a: i32,
+        b: struct {
+            c: bool,
+            d: u8,
+            e: Num(u16, .little),
         },
-        .{
-            .a = 258,
-            .b = .{
-                .c = true,
-                .d = 0x08,
-                .e = 0x10,
-            },
-            .c = .C,
-            .d = .{ .B = 0x00 },
-            .e = &.{ .{ .a = .h, .b = 3 }, .{ .a = .h, .b = 5 }, .{ .a = .g, .b = 6 } },
+        c: E,
+        d: union(E) {
+            A: bool,
+            B: u8,
+            C: Num(u16, .little),
         },
-    );
+        e: PrefixedArray(Num(u16, .big), struct {
+            a: enum(u8) { f = 0x00, g = 0x01, h = 0x02 },
+            b: i8,
+        }, .{}),
+    }), &.{
+        0x00, 0x00, 0x01, 0x02, 0x01, 0x08, 0x10, 0x00, 0x02, 0x05, 0x00,
+        0x00, 0x03, 0x02, 0x03, 0x02, 0x05, 0x01, 0x06,
+    }, .{
+        .a = 258,
+        .b = .{
+            .c = true,
+            .d = 0x08,
+            .e = 0x10,
+        },
+        .c = .C,
+        .d = .{ .B = 0x00 },
+        .e = &.{ .{ .a = .h, .b = 3 }, .{ .a = .h, .b = 5 }, .{ .a = .g, .b = 6 } },
+    }, true);
 }

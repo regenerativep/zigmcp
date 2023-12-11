@@ -64,7 +64,7 @@ pub const PacketFrame = struct {
         //std.debug.print("len: {}\n", .{len_});
         var id: u7 = undefined;
         try VarInt(u7).read(reader, &id, undefined);
-        //std.debug.print("id: {}\n", .{id});
+        //std.debug.print("id: {} ({})\n", .{ id, VarInt(u7).size(id) });
         const len = (math.cast(usize, len_) orelse return error.InvalidLength) -
             VarInt(u7).size(id);
         const data = try a.alloc(u8, len);
