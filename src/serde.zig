@@ -453,23 +453,31 @@ pub fn DynamicArray(comptime T: type) type {
             }
         }
         pub fn read(reader: anytype, out: *UT, a: Allocator, len: V) !void {
-            var arr = try a.alloc(ElemSpec.UT, len);
+            const arr = try a.alloc(ElemSpec.UT, len);
             errdefer a.free(arr);
+            try readWithBuffer(reader, out, arr, a);
+        }
+        pub fn readWithBuffer(
+            reader: anytype,
+            out: *UT,
+            buf: []ElemSpec.UT,
+            a: Allocator,
+        ) !void {
             if (ElemSpec.UT == u8) {
-                try reader.readNoEof(arr);
+                try reader.readNoEof(buf);
             } else {
-                for (arr, 0..) |*d, i| {
+                for (buf, 0..) |*d, i| {
                     errdefer {
                         var j = i;
                         while (j > 0) {
                             j -= 1;
-                            ElemSpec.deinit(&arr[j], a);
+                            ElemSpec.deinit(&buf[j], a);
                         }
                     }
                     try ElemSpec.read(reader, d, a);
                 }
             }
-            out.* = arr;
+            out.* = buf;
         }
         pub fn deinit(self: *UT, a: Allocator) void {
             var i = self.len;
@@ -531,6 +539,7 @@ pub const CodepointArray = struct {
 };
 
 pub const RestrictIntOptions = struct {
+    min: ?comptime_int = null,
     max: ?comptime_int = null,
 };
 pub fn RestrictInt(comptime T: type, comptime opts: RestrictIntOptions) type {
@@ -547,6 +556,9 @@ pub fn RestrictInt(comptime T: type, comptime opts: RestrictIntOptions) type {
             errdefer InnerSpec.deinit(out, a);
             if (opts.max) |max| {
                 if (out.* > max) return error.InvalidInt;
+            }
+            if (opts.min) |min| {
+                if (out.* < min) return error.InvalidInt;
             }
         }
         pub fn deinit(self: *UT, a: Allocator) void {
@@ -1022,8 +1034,6 @@ pub fn doTestOnValue(
     var writebuf = std.ArrayList(u8).init(testing.allocator);
     defer writebuf.deinit();
     try ST.write(writebuf.writer(), value);
-    //if (writebuf.items.len >= 416)
-    //    std.debug.print("\n{any}\n", .{@as([]const u8, writebuf.items[288..416])});
 
     var stream = std.io.fixedBufferStream(writebuf.items);
     var result: ST.UT = undefined;

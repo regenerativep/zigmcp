@@ -8,10 +8,23 @@ const mcp = @import("mcp");
 const mcio = mcp.packetio;
 const mcv = mcp.vlatest;
 
+pub const Options = struct {
+    show_packet_contents: bool = false,
+};
+
 pub fn main() !void {
-    //@setEvalBranchQuota(10_000);
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
+
+    var options = Options{};
+
+    var args = try std.process.argsAlloc(gpa.allocator());
+    defer std.process.argsFree(gpa.allocator(), args);
+    for (args[@min(1, args.len)..]) |arg| {
+        if (mem.eql(u8, arg, "-d")) {
+            options.show_packet_contents = true;
+        }
+    }
 
     const address = net.Address.initIp4(.{ 127, 0, 0, 1 }, 25400);
     var server = net.StreamServer.init(.{ .reuse_address = true });
@@ -26,7 +39,7 @@ pub fn main() !void {
             continue;
         };
         print("receiving connection from {}\n", .{conn.address});
-        handleServerbound(gpa.allocator(), conn) catch |e| {
+        handleServerbound(gpa.allocator(), conn, options) catch |e| {
             if (e != error.EndOfStream) {
                 std.log.err("Error handling client from {}, {any}", .{ conn.address, e });
             } else {
@@ -54,15 +67,17 @@ const CurrentState = enum {
     configuration,
     play,
 };
-pub fn handleServerbound(a: Allocator, conn: net.StreamServer.Connection) !void {
+pub fn handleServerbound(
+    a: Allocator,
+    conn: net.StreamServer.Connection,
+    options: Options,
+) !void {
     @setEvalBranchQuota(10_000);
 
     var cbr = io.bufferedReader(conn.stream.reader());
     var cbw = io.bufferedWriter(conn.stream.writer());
     const cr = cbr.reader();
 
-    // I'm _sure_ there's an amazing way to do this with atomics
-    //     (however, I don't know atomics very well)
     var alive_mutex = std.Thread.Mutex{};
     var alive: bool = true;
 
@@ -106,20 +121,16 @@ pub fn handleServerbound(a: Allocator, conn: net.StreamServer.Connection) !void 
     clientbound_thread = try std.Thread.spawn(
         .{},
         handleClientbound_,
-        .{ a, conn.stream, &cbw, &sbr, current_state, &alive, &alive_mutex },
+        .{ a, conn.stream, &cbw, &sbr, current_state, &alive, &alive_mutex, options },
     );
 
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
     const aa = arena.allocator();
     while (true) {
-        //print("waiting for serverbound packet\n", .{});
         var frame = try mcio.PacketFrame.read(cr, aa);
-        //defer frame.deinit(aa);
-        //print("got serverbound packet\n", .{});
         try frame.write(sw);
         try sbw.flush();
-        //print("passed along serverbound packet\n", .{});
 
         {
             alive_mutex.lock();
@@ -137,26 +148,28 @@ pub fn handleServerbound(a: Allocator, conn: net.StreamServer.Connection) !void 
                     .play => mcv.P,
                 };
                 const ST = STS.SB;
-                // yeah we also do a (safer) check in parse, whatever. we need this
-                //     for state switching though
-                const id: STS.SBID = @enumFromInt(frame.id);
+
+                const id: ?STS.SBID = std.meta.intToEnum(STS.SBID, frame.id) catch null;
 
                 stdout_mutex.lock();
                 defer stdout_mutex.unlock();
                 try stdout.print(
-                    "c->s:{s}:0x{X}:({}): {s} ",
-                    .{ @tagName(v), frame.id, frame.data.len, @tagName(id) },
+                    "c->s:{s}:0x{X}:({}): ",
+                    .{ @tagName(v), frame.id, frame.data.len },
                 );
+                if (!options.show_packet_contents and id != null) {
+                    try stdout.print("{s} ", .{@tagName(id.?)});
+                }
                 defer stdout_b.flush() catch {};
 
-                if (v != .status) {
+                if (v != .status and id != null) {
                     const test_id = switch (v) {
                         .login => .login_acknowledged,
                         .configuration => .finish_configuration,
                         .play => .acknowledge_configuration,
                         else => unreachable,
                     };
-                    if (id == test_id) {
+                    if (id.? == test_id) {
                         current_state = switch (v) {
                             .login => .configuration,
                             .configuration => .play,
@@ -171,6 +184,11 @@ pub fn handleServerbound(a: Allocator, conn: net.StreamServer.Connection) !void 
                     continue;
                 };
                 defer ST.deinit(&packet, aa);
+
+                if (options.show_packet_contents) {
+                    try mcp.debugPrint(stdout, packet, 0);
+                }
+
                 try stdout.writeByte('\n');
             },
         }
@@ -186,6 +204,7 @@ pub fn handleClientbound_(
     current_state_: CurrentState,
     alive: *bool,
     alive_mutex: *std.Thread.Mutex,
+    options: Options,
 ) void {
     handleClientbound(
         a,
@@ -195,6 +214,7 @@ pub fn handleClientbound_(
         current_state_,
         alive,
         alive_mutex,
+        options,
     ) catch {};
 }
 pub fn handleClientbound(
@@ -205,6 +225,7 @@ pub fn handleClientbound(
     current_state_: CurrentState,
     alive: *bool,
     alive_mutex: *std.Thread.Mutex,
+    options: Options,
 ) !void {
     @setEvalBranchQuota(10_000);
     const sr = sbr.reader();
@@ -223,9 +244,7 @@ pub fn handleClientbound(
     defer arena.deinit();
     const aa = arena.allocator();
     while (true) {
-        //print("waiting for clientbound packet\n", .{});
         var frame = try mcio.PacketFrame.read(sr, aa);
-        //defer frame.deinit(aa);
         try frame.write(cw);
         try cbw.flush();
 
@@ -245,24 +264,27 @@ pub fn handleClientbound(
                     .play => mcv.P,
                 };
                 const ST = STS.CB;
-                const id: STS.CBID = @enumFromInt(frame.id);
+                const id: ?STS.CBID = std.meta.intToEnum(STS.CBID, frame.id) catch null;
 
                 stdout_mutex.lock();
                 defer stdout_mutex.unlock();
                 try stdout.print(
-                    "c<-s:{s}:0x{X}:({}): {s} ",
-                    .{ @tagName(v), frame.id, frame.data.len, @tagName(id) },
+                    "c<-s:{s}:0x{X}:({}): ",
+                    .{ @tagName(v), frame.id, frame.data.len },
                 );
+                if (!options.show_packet_contents and id != null) {
+                    try stdout.print("{s} ", .{@tagName(id.?)});
+                }
                 defer stdout_b.flush() catch {};
 
-                if (v != .status) {
+                if (v != .status and id != null) {
                     const test_id = switch (v) {
                         .login => .login_success,
                         .configuration => .finish_configuration,
                         .play => .start_configuration,
                         else => unreachable,
                     };
-                    if (id == test_id) {
+                    if (id.? == test_id) {
                         current_state = switch (v) {
                             .login => .configuration,
                             .configuration => .play,
@@ -272,13 +294,25 @@ pub fn handleClientbound(
                     }
                 }
 
-                //@compileLog(v);
                 var packet = frame.parse(ST, aa) catch |e| {
                     try stdout.print("parse error: \"{s}\"\n", .{@errorName(e)});
                     continue;
                 };
                 defer ST.deinit(&packet, aa);
+
+                if (options.show_packet_contents) {
+                    try mcp.debugPrint(stdout, packet, 0);
+                }
+
                 try stdout.writeByte('\n');
+
+                //if (v == .play) {
+                //    if (id == .login) {
+                //        var f = try std.fs.cwd().createFile("packet_login.bin", .{});
+                //        defer f.close();
+                //        try ST.write(f.writer(), packet);
+                //    }
+                //}
 
                 //if (v == .configuration) {
                 //    if (id == .registry_data) {

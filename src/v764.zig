@@ -5,8 +5,6 @@ const Allocator = mem.Allocator;
 const assert = std.debug.assert;
 const testing = std.testing;
 
-const Uuid6 = @import("uuid6");
-
 const serde = @import("serde.zig");
 const PrefixedArray = serde.PrefixedArray;
 const TaggedUnion = serde.TaggedUnion;
@@ -23,6 +21,14 @@ const ChunkSection = @import("chunk.zig").ChunkSection;
 const PalettedContainer = @import("chunk.zig").PalettedContainer;
 const BlockEntity = @import("chunk.zig").BlockEntity;
 const TOTAL_CHUNK_SECTIONS = @import("chunk.zig").TOTAL_CHUNK_SECTIONS;
+const LightLevels = @import("chunk.zig").LightLevels;
+
+pub const BitSet = @import("mcserde.zig").BitSet;
+pub const PString = @import("mcserde.zig").PString;
+pub const Uuid = @import("mcserde.zig").Uuid;
+pub const Angle = @import("mcserde.zig").Angle;
+pub const V3 = @import("mcserde.zig").V3;
+pub const Position = @import("mcserde.zig").Position;
 
 const generated = @import("mcp-generated");
 pub const Block = generated.Block;
@@ -31,7 +37,7 @@ pub const Biome = generated.Biome;
 pub const Dimension = generated.Dimension;
 pub const Effect = generated.Effect;
 
-const VarU7 = VarInt(u7); // always a single byte, but its still technically a varint in the protocol i guess
+const VarU7 = VarInt(u7);
 const VarI32 = VarInt(i32);
 const VarI64 = VarInt(i64);
 
@@ -39,46 +45,6 @@ const MaxNbtDepth = @import("main.zig").MaxNbtDepth;
 
 pub const ProtocolVersion = 764;
 pub const MCVersion = "1.20.2";
-
-/// String serialization type, because the protocol works with codepoint counts, not byte counts
-pub fn PString(comptime max_len_opt: ?comptime_int) type {
-    return serde.Pass(
-        serde.RestrictInt(serde.Casted(VarI32, usize), .{ .max = max_len_opt }),
-        serde.CodepointArray,
-    );
-}
-
-pub const Uuid = struct {
-    // TODO: make serde use same usertype when no detected difference, and then
-    //     we can just put a `pub usingnamespace Spec(Uuid6);` here
-    pub const UT = Uuid6;
-    pub const E = error{EndOfStream};
-    pub fn write(writer: anytype, in: UT) !void {
-        try writer.writeAll(&in.bytes);
-    }
-    pub fn read(reader: anytype, out: *UT, _: Allocator) !void {
-        try reader.readNoEof(&out.bytes);
-    }
-    pub fn deinit(self: *UT, _: Allocator) void {
-        self.* = undefined;
-    }
-    pub fn size(self: UT) usize {
-        return self.bytes.len;
-    }
-    // stolen from https://github.com/regenerativep/zig-mc-server/blob/d82dc727311fd10d2e404ebb4715336637dcca97/src/mcproto.zig#L137
-    // referenced https://github.com/AdoptOpenJDK/openjdk-jdk8u/blob/9a91972c76ddda5c1ce28b50ca38cbd8a30b7a72/jdk/src/share/classes/java/util/UUID.java#L153-L175
-    pub fn fromUsername(username: []const u8) UT {
-        assert(username.len <= 16);
-        const ofp = "OfflinePlayer:";
-        var buf = ofp.* ++ ([_]u8{undefined} ** 16);
-        @memcpy(buf[ofp.len..][0..username.len], username);
-        var uuid: UT = undefined;
-        std.crypto.hash.Md5.hash(buf[0 .. ofp.len + username.len], &uuid.bytes, .{});
-        uuid.setVersion(3);
-        uuid.setVariant(.rfc4122);
-        return uuid;
-    }
-};
 
 pub const ChatString = PString(262144);
 pub const Identifier = PString(32767);
@@ -233,23 +199,6 @@ pub const RegistryData = nbt.Named(null, struct {
         monster_spawn_block_light_limit: i32,
     }),
 });
-
-pub const Angle = struct {
-    pub usingnamespace serde.Num(u8, .big);
-    pub fn fromF32(val: f32) u8 {
-        return @intCast(@mod(@as(isize, @intFromFloat((val / 360.0) * 256.0)), 256));
-    }
-};
-
-pub fn V3(comptime T: type) type {
-    return struct { x: T, y: T, z: T };
-}
-
-pub const Position = packed struct(u64) {
-    y: i12,
-    z: i26,
-    x: i26,
-};
 
 pub const CommandNode = struct {
     pub const NodeType = enum(u2) {
@@ -566,9 +515,6 @@ test "protocol slot" {
         .data = .{ .int = @bitCast(@as(u32, 0x12345678)) },
     }, false);
 }
-
-// TODO: make a custom type for this so it is more easily usable
-pub const BitSet = PrefixedArray(VarI32, i64, .{});
 
 pub fn PlusOne(comptime T: type) type {
     return serde.Mapped(T, struct {
@@ -955,20 +901,20 @@ pub const WorldEvent = serde.Union(union(WorldEventId) {
     copper_remove_wax: I320,
     copper_scrape_oxidation: I320,
 });
-pub const LightLevels = serde.Struct(struct {
-    sky_light_mask: BitSet,
-    block_light_mask: BitSet,
-    empty_sky_light_mask: BitSet,
-    empty_block_light_mask: BitSet,
-    sky_lights: PrefixedArray(VarI32, struct {
-        len: serde.Constant(VarI32, 2048, null),
-        data: [2048]u8,
-    }, .{}),
-    block_lights: PrefixedArray(VarI32, struct {
-        len: serde.Constant(VarI32, 2048, null),
-        data: [2048]u8,
-    }, .{}),
-});
+//pub const LightLevels = serde.Struct(struct {
+//    sky_light_mask: BitSet,
+//    block_light_mask: BitSet,
+//    empty_sky_light_mask: BitSet,
+//    empty_block_light_mask: BitSet,
+//    sky_lights: PrefixedArray(VarI32, struct {
+//        len: serde.Constant(VarI32, 2048, null),
+//        data: [2048]u8,
+//    }, .{}),
+//    block_lights: PrefixedArray(VarI32, struct {
+//        len: serde.Constant(VarI32, 2048, null),
+//        data: [2048]u8,
+//    }, .{}),
+//});
 
 pub const DimensionSpec = StringEnum(struct {
     pub const overworld = "minecraft:overworld";
@@ -977,6 +923,7 @@ pub const DimensionSpec = StringEnum(struct {
 }, Identifier);
 
 pub const RespawnSpec = serde.Struct(struct {
+    // TODO: name probably shouldnt be an enum
     dimension_type: Identifier,
     dimension_name: DimensionSpec,
     hashed_seed: u64,
@@ -1277,6 +1224,142 @@ pub const PlayerAbilitiesFlags = serde.Packed(packed struct(u8) {
     creative_mode: bool,
     _u: u4 = 0,
 }, .big);
+
+pub const PlayerInfoUpdate = struct {
+    pub const ActionsSpec = serde.Spec(packed struct(u8) {
+        add_player: bool = false,
+        initialize_chat: bool = false,
+        update_gamemode: bool = false,
+        update_listed: bool = false,
+        update_latency: bool = false,
+        update_display_name: bool = false,
+        _u: u2 = 0,
+    });
+    pub const AddPlayerSpec = serde.Struct(struct {
+        name: PString(16),
+        properties: PrefixedArray(VarI32, struct {
+            name: PString(32767),
+            value: PString(32767),
+            signature: ?PString(32767),
+        }, .{}),
+    });
+    pub const InitializeChatSpec = serde.Optional(struct {
+        chat_session_id: Uuid,
+        public_key: PublicKey,
+    });
+    pub const UpdateDisplayNameSpec = serde.Optional(ChatString);
+    pub const PlayerAction = struct {
+        uuid: Uuid.UT,
+        add_player: ?AddPlayerSpec.UT = null,
+        /// yes, this and update_display_name are optionals of optionals
+        initialize_chat: ?InitializeChatSpec.UT = null,
+        update_gamemode: ?VarI32.UT = null,
+        update_listed: ?bool = null,
+        update_latency: ?VarI32.UT = null,
+        update_display_name: ?UpdateDisplayNameSpec.UT = null,
+    };
+
+    pub const UT = struct {
+        actions: ActionsSpec.UT,
+        player_actions: []const PlayerAction,
+    };
+    pub const E = ActionsSpec.E || AddPlayerSpec.E ||
+        InitializeChatSpec.E || UpdateDisplayNameSpec.E || VarI32.E ||
+        Uuid.E || serde.Casted(VarI32, usize).E;
+    const action_specs = .{
+        .{ "add_player", AddPlayerSpec },
+        .{ "initialize_chat", InitializeChatSpec },
+        .{ "update_gamemode", VarI32 },
+        .{ "update_listed", serde.Bool },
+        .{ "update_latency", VarI32 },
+        .{ "update_display_name", UpdateDisplayNameSpec },
+    };
+
+    pub fn write(writer: anytype, in: UT) !void {
+        try ActionsSpec.write(writer, in.actions);
+        try VarI32.write(writer, @intCast(in.player_actions.len));
+        for (in.player_actions) |player_action| {
+            try Uuid.write(writer, player_action.uuid);
+            inline for (action_specs) |pair| {
+                if (@field(player_action, pair[0])) |action_field| {
+                    try pair[1].write(writer, action_field);
+                }
+            }
+        }
+    }
+    pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+        try ActionsSpec.read(reader, &out.actions, undefined);
+        var len: usize = undefined;
+        try serde.Casted(VarI32, usize).read(reader, &len, undefined);
+        const actions = try a.alloc(PlayerAction, len);
+        errdefer a.free(actions);
+        for (actions, 0..) |*player_action, i| {
+            try Uuid.read(reader, &player_action.uuid, undefined);
+            errdefer {
+                var j = i;
+                while (j > 0) {
+                    j -= 1;
+                    comptime var k = action_specs.len;
+                    inline while (k > 0) {
+                        k -= 1;
+                        const pair = action_specs[k];
+                        if (@field(actions[j], pair[0])) |*item| {
+                            pair[1].deinit(item, a);
+                        }
+                    }
+                }
+            }
+            inline for (action_specs, 0..) |pair, j| {
+                if (@field(out.actions, pair[0])) {
+                    errdefer {
+                        comptime var k = j;
+                        inline while (k > 0) {
+                            k -= 1;
+                            const pair_e = action_specs[k];
+                            if (@field(actions[j], pair_e[0])) |*item| {
+                                pair_e[1].deinit(item, a);
+                            }
+                        }
+                    }
+                    @field(player_action, pair[0]) = @as(pair[1].UT, undefined);
+                    try pair[1].read(reader, &@field(player_action, pair[0]).?, a);
+                } else {
+                    @field(player_action, pair[0]) = null;
+                }
+            }
+        }
+        out.player_actions = actions;
+    }
+    pub fn deinit(self: *UT, a: Allocator) void {
+        var i = self.player_actions.len;
+        while (i > 0) {
+            i -= 1;
+            comptime var j = action_specs.len;
+            inline while (j > 0) {
+                j -= 1;
+                const pair = action_specs[j];
+                if (@field(self.player_actions[i], pair[0])) |*item| {
+                    pair[1].deinit(@constCast(item), a);
+                }
+            }
+        }
+        a.free(self.player_actions);
+        self.* = undefined;
+    }
+    pub fn size(self: UT) usize {
+        var total = ActionsSpec.size(self.actions) +
+            VarI32.size(@intCast(self.player_actions.len));
+        for (self.player_actions) |player_action| {
+            total += Uuid.size(player_action.uuid);
+            inline for (action_specs) |pair| {
+                if (@field(player_action, pair[0])) |action_field| {
+                    total += pair[1].size(action_field);
+                }
+            }
+        }
+        return total;
+    }
+};
 
 pub const H = struct {
     pub const SBID = enum(u7) {
@@ -2257,140 +2340,7 @@ pub const P = struct {
             message: ChatString,
         },
         player_info_remove: PrefixedArray(VarI32, Uuid, .{}),
-        player_info_update: struct {
-            pub const ActionsSpec = serde.Spec(packed struct(u8) {
-                add_player: bool = false,
-                initialize_chat: bool = false,
-                update_gamemode: bool = false,
-                update_listed: bool = false,
-                update_latency: bool = false,
-                update_display_name: bool = false,
-                _u: u2 = 0,
-            });
-            pub const AddPlayerSpec = serde.Struct(struct {
-                name: PString(16),
-                properties: PrefixedArray(VarI32, struct {
-                    name: PString(32767),
-                    value: PString(32767),
-                    signature: ?PString(32767),
-                }, .{}),
-            });
-            pub const InitializeChatSpec = serde.Optional(struct {
-                chat_session_id: Uuid,
-                public_key: PublicKey,
-            });
-            pub const UpdateDisplayNameSpec = serde.Optional(ChatString);
-            pub const PlayerAction = struct {
-                uuid: Uuid.UT,
-                add_player: ?AddPlayerSpec.UT = null,
-                initialize_chat: ?InitializeChatSpec.UT = null,
-                update_gamemode: ?VarI32.UT = null,
-                update_listed: ?bool = null,
-                update_latency: ?VarI32.UT = null,
-                update_display_name: ?UpdateDisplayNameSpec.UT = null,
-            };
-
-            pub const UT = struct {
-                actions: ActionsSpec.UT,
-                player_actions: []const PlayerAction,
-            };
-            pub const E = ActionsSpec.E || AddPlayerSpec.E ||
-                InitializeChatSpec.E || UpdateDisplayNameSpec.E || VarI32.E ||
-                Uuid.E || serde.Casted(VarI32, usize).E;
-            const action_specs = .{
-                .{ "add_player", AddPlayerSpec },
-                .{ "initialize_chat", InitializeChatSpec },
-                .{ "update_gamemode", VarI32 },
-                .{ "update_listed", serde.Bool },
-                .{ "update_latency", VarI32 },
-                .{ "update_display_name", UpdateDisplayNameSpec },
-            };
-
-            pub fn write(writer: anytype, in: UT) !void {
-                try ActionsSpec.write(writer, in.actions);
-                try VarI32.write(writer, @intCast(in.player_actions.len));
-                for (in.player_actions) |player_action| {
-                    try Uuid.write(writer, player_action.uuid);
-                    inline for (action_specs) |pair| {
-                        if (@field(player_action, pair[0])) |action_field| {
-                            try pair[1].write(writer, action_field);
-                        }
-                    }
-                }
-            }
-            pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
-                try ActionsSpec.read(reader, &out.actions, undefined);
-                var len: usize = undefined;
-                try serde.Casted(VarI32, usize).read(reader, &len, undefined);
-                const actions = try a.alloc(PlayerAction, len);
-                errdefer a.free(actions);
-                for (actions, 0..) |*player_action, i| {
-                    try Uuid.read(reader, &player_action.uuid, undefined);
-                    errdefer {
-                        var j = i;
-                        while (j > 0) {
-                            j -= 1;
-                            comptime var k = action_specs.len;
-                            inline while (k > 0) {
-                                k -= 1;
-                                const pair = action_specs[k];
-                                if (@field(actions[j], pair[0])) |*item| {
-                                    pair[1].deinit(item, a);
-                                }
-                            }
-                        }
-                    }
-                    inline for (action_specs, 0..) |pair, j| {
-                        if (@field(out.actions, pair[0])) {
-                            errdefer {
-                                comptime var k = j;
-                                inline while (k > 0) {
-                                    k -= 1;
-                                    const pair_e = action_specs[k];
-                                    if (@field(actions[j], pair_e[0])) |*item| {
-                                        pair_e[1].deinit(item, a);
-                                    }
-                                }
-                            }
-                            @field(player_action, pair[0]) = @as(pair[1].UT, undefined);
-                            try pair[1].read(reader, &@field(player_action, pair[0]).?, a);
-                        } else {
-                            @field(player_action, pair[0]) = null;
-                        }
-                    }
-                }
-                out.player_actions = actions;
-            }
-            pub fn deinit(self: *UT, a: Allocator) void {
-                var i = self.player_actions.len;
-                while (i > 0) {
-                    i -= 1;
-                    comptime var j = action_specs.len;
-                    inline while (j > 0) {
-                        j -= 1;
-                        const pair = action_specs[j];
-                        if (@field(self.player_actions[i], pair[0])) |*item| {
-                            pair[1].deinit(@constCast(item), a);
-                        }
-                    }
-                }
-                a.free(self.player_actions);
-                self.* = undefined;
-            }
-            pub fn size(self: UT) usize {
-                var total = ActionsSpec.size(self.actions) +
-                    VarI32.size(@intCast(self.player_actions.len));
-                for (self.player_actions) |player_action| {
-                    total += Uuid.size(player_action.uuid);
-                    inline for (action_specs) |pair| {
-                        if (@field(player_action, pair[0])) |action_field| {
-                            total += pair[1].size(action_field);
-                        }
-                    }
-                }
-                return total;
-            }
-        },
+        player_info_update: PlayerInfoUpdate,
         look_at: struct {
             const FeetOrEyesSpec = serde.Enum(VarU7, enum(u7) { feet = 0, eyes = 1 });
             from: FeetOrEyesSpec,
@@ -3150,7 +3100,7 @@ pub const P = struct {
                     height: usize,
                     group: Group.UT,
                     category: RecipeCategory.UT,
-                    ingredients: []Ingredient.UT,
+                    ingredients: []const Ingredient.UT,
                     result: Slot.UT,
                     show_notification: bool,
 
@@ -3175,25 +3125,26 @@ pub const P = struct {
                         errdefer Group.deinit(&out.group, a);
                         try RecipeCategory.read(reader, &out.category, undefined);
 
-                        out.ingredients = try a.alloc(Ingredient.UT, out.width * out.height);
-                        errdefer a.free(out.ingredients);
-                        for (out.ingredients, 0..) |*item, i| {
+                        const ingr = try a.alloc(Ingredient.UT, out.width * out.height);
+                        errdefer a.free(ingr);
+                        for (ingr, 0..) |*item, i| {
                             errdefer {
                                 var j = i;
                                 while (j > 0) {
                                     j -= 1;
-                                    Ingredient.deinit(&out.ingredients[j], a);
+                                    Ingredient.deinit(&ingr[j], a);
                                 }
                             }
                             try Ingredient.read(reader, item, a);
                         }
                         errdefer {
-                            var i = out.ingredients.len;
+                            var i = ingr.len;
                             while (i > 0) {
                                 i -= 1;
-                                Ingredient.deinit(&out.ingredients[i], a);
+                                Ingredient.deinit(&ingr[i], a);
                             }
                         }
+                        out.ingredients = ingr;
 
                         try Slot.read(reader, &out.result, a);
                         errdefer Slot.deinit(&out.result, a);
@@ -3204,15 +3155,17 @@ pub const P = struct {
                         var i = self.ingredients.len;
                         while (i > 0) {
                             i -= 1;
-                            Ingredient.deinit(&self.ingredients[i], a);
+                            Ingredient.deinit(@constCast(&self.ingredients[i]), a);
                         }
                         a.free(self.ingredients);
                         Group.deinit(&self.group, a);
                         self.* = undefined;
                     }
                     pub fn size(self: UT) usize {
-                        var total = LenSpec.size(self.width) + LenSpec.size(self.height) +
-                            Group.size(self.group) + RecipeCategory.size(self.category);
+                        var total = LenSpec.size(self.width) +
+                            LenSpec.size(self.height) +
+                            Group.size(self.group) +
+                            RecipeCategory.size(self.category);
                         for (self.ingredients) |item| total += Ingredient.size(item);
                         return total + Slot.size(self.result) +
                             serde.Bool.size(self.show_notification);
@@ -3554,7 +3507,7 @@ pub const P = struct {
             secondary_effect: ?PotionId,
         },
         set_held_item: struct {
-            slot: Slot,
+            slot: i16,
         },
         program_command_block: struct {
             location: Position,
@@ -3667,20 +3620,7 @@ test "chunk packet" {
             },
             .data = &chunk.sections,
             .block_entities = &.{},
-            .light_levels = .{
-                .sky_light_mask = &([_]i64{0} **
-                    ((TOTAL_CHUNK_SECTIONS + 2 + 63) / 64)),
-                .block_light_mask = &([_]i64{0} **
-                    ((TOTAL_CHUNK_SECTIONS + 2 + 63) / 64)),
-                .empty_sky_light_mask = &([_]i64{
-                    @bitCast(@as(u64, math.maxInt(i64))),
-                } ** ((TOTAL_CHUNK_SECTIONS + 2 + 63) / 64)),
-                .empty_block_light_mask = &([_]i64{
-                    @bitCast(@as(u64, math.maxInt(u64))),
-                } ** ((TOTAL_CHUNK_SECTIONS + 2 + 63) / 64)),
-                .sky_lights = &.{},
-                .block_lights = &.{},
-            },
+            .light_levels = .{},
         },
     }, true);
 }

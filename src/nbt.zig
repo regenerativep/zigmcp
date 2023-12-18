@@ -137,7 +137,7 @@ pub fn Compound(comptime T: type) type {
             var written = std.StaticBitSet(specs.len).initEmpty();
             var must_write = comptime blk: {
                 var s = std.StaticBitSet(specs.len).initEmpty();
-                inline for (utinfo.fields, 0..) |field, i| {
+                for (utinfo.fields, 0..) |field, i| {
                     if (@typeInfo(field.type) == .Optional) s.set(i);
                 }
                 break :blk s;

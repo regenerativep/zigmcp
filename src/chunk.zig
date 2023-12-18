@@ -7,6 +7,8 @@ const testing = std.testing;
 
 const serde = @import("serde.zig");
 
+const BitSet = @import("mcserde.zig").BitSet;
+
 const VarI32 = @import("varint.zig").VarInt(i32);
 const nbt = @import("nbt.zig");
 
@@ -87,10 +89,228 @@ pub const BlockEntity = serde.Struct(struct {
     data: BlockEntityData,
 });
 
+fn allEql(arr: anytype, value: std.meta.Child(@TypeOf(arr))) bool {
+    const T = std.meta.Child(@TypeOf(arr));
+    const V = @Vector(arr.len, T);
+    return @reduce(.And, @as(V, arr) == @as(V, @splat(value)));
+}
+
+pub const LightLevels = struct {
+    pub const UT = @This();
+    const LenSpec = serde.Constant(VarI32, 2048, null);
+    const BIT_SET_LONG_COUNT = BitSet.longCount(TOTAL_CHUNK_SECTIONS + 2);
+    const BitSetLenSpec = serde.Constant(VarI32, BIT_SET_LONG_COUNT, null);
+    pub const ArrayLenSpec = serde.RestrictInt(
+        serde.Casted(VarI32, usize),
+        .{ .max = TOTAL_CHUNK_SECTIONS + 2 },
+    );
+
+    pub const Level = u4;
+
+    pub const Section = union(enum) {
+        single: Level,
+        direct: [2048]u8,
+
+        pub fn set(
+            self: *Section,
+            x: BlockAxis,
+            z: BlockAxis,
+            y: BlockAxis,
+            level: Level,
+        ) void {
+            const ind = axisToIndex(BlockAxis, x, z, y);
+            switch (self.*) {
+                .single => |d| if (d != level) {
+                    self.* = .{ .direct = undefined };
+                    @memset(&self.direct, d);
+                    self.directSet(ind, level);
+                },
+                .direct => self.directSet(ind, level),
+            }
+        }
+        pub fn get(self: *Section, x: BlockAxis, z: BlockAxis, y: BlockAxis) Level {
+            const ind = axisToIndex(BlockAxis, x, z, y);
+            return switch (self.*) {
+                .single => |d| d,
+                .direct => |d| @truncate(
+                    d[ind >> 1] >> (@as(u1, @truncate(ind)) * @as(u3, 4)),
+                ),
+            };
+        }
+        fn directSet(self: *Section, ind: AxisIndex(BlockAxis), level: Level) void {
+            const mask = @as(u8, 0xF) << (@as(u1, @truncate(ind)) * @as(u3, 4));
+            self.direct[ind >> 1] &= ~mask;
+            self.direct[ind >> 1] |=
+                @as(u8, level) << (@as(u1, @truncate(ind)) * @as(u3, 4));
+        }
+    };
+
+    block: [TOTAL_CHUNK_SECTIONS + 2]Section =
+        [_]Section{.{ .single = 0xF }} ** (TOTAL_CHUNK_SECTIONS + 2),
+    sky: [TOTAL_CHUNK_SECTIONS + 2]Section =
+        [_]Section{.{ .single = 0xF }} ** (TOTAL_CHUNK_SECTIONS + 2),
+
+    const longs_init = [_]u64{0} ** BIT_SET_LONG_COUNT;
+    pub fn write(writer: anytype, in: UT) !void {
+        var longs = longs_init;
+        var mask = BitSet{ .data = &longs };
+
+        // sky light mask
+        var sky_light_count: i32 = 0;
+        for (&in.sky, 0..) |section, i|
+            if (section != .single or section.single != 0x0) {
+                mask.set(i);
+                sky_light_count += 1;
+            };
+        try BitSet.write(writer, mask);
+
+        // block light mask
+        longs = longs_init;
+        var block_light_count: i32 = 0;
+        for (&in.block, 0..) |section, i|
+            if (section != .single or section.single != 0x0) {
+                mask.set(i);
+                block_light_count += 1;
+            };
+        try BitSet.write(writer, mask);
+
+        // empty sky light mask
+        longs = longs_init;
+        for (&in.sky, 0..) |section, i|
+            if (section == .single and section.single == 0x0)
+                mask.set(i);
+        try BitSet.write(writer, mask);
+
+        // empty block light mask
+        longs = longs_init;
+        for (&in.block, 0..) |section, i|
+            if (section == .single and section.single == 0x0)
+                mask.set(i);
+        try BitSet.write(writer, mask);
+
+        // sky light array
+        try VarI32.write(writer, sky_light_count);
+        for (&in.sky) |section| switch (section) {
+            .single => |d| if (d != 0x0) {
+                try LenSpec.write(writer, undefined);
+                try writer.writeByteNTimes(@as(u8, d) * 17, 2048);
+            },
+            .direct => |d| {
+                try LenSpec.write(writer, undefined);
+                try writer.writeAll(&d);
+            },
+        };
+
+        // block light array
+        try VarI32.write(writer, block_light_count);
+        for (&in.block) |section| switch (section) {
+            .single => |d| if (d != 0x0) {
+                try LenSpec.write(writer, undefined);
+                try writer.writeByteNTimes(@as(u8, d) * 17, 2048);
+            },
+            .direct => |d| {
+                try LenSpec.write(writer, undefined);
+                try writer.writeAll(&d);
+            },
+        };
+    }
+    pub fn read(reader: anytype, out: *UT, _: Allocator) !void {
+        // sky light mask
+        try BitSetLenSpec.read(reader, undefined, undefined);
+        var sky_longs = longs_init;
+        var sky_bits: BitSet = undefined;
+        try BitSet.readWithBuffer(
+            reader,
+            &sky_bits,
+            &sky_longs,
+            undefined,
+        );
+
+        // block light mask
+        try BitSetLenSpec.read(reader, undefined, undefined);
+        var block_longs = longs_init;
+        var block_bits: BitSet = undefined;
+        try BitSet.readWithBuffer(
+            reader,
+            &block_bits,
+            &block_longs,
+            undefined,
+        );
+
+        // empty sky light mask
+        try BitSetLenSpec.read(reader, undefined, undefined);
+        var empty_sky_longs = longs_init;
+        var empty_sky_bits: BitSet = undefined;
+        try BitSet.readWithBuffer(
+            reader,
+            &empty_sky_bits,
+            &empty_sky_longs,
+            undefined,
+        );
+
+        // empty sky light mask
+        try BitSetLenSpec.read(reader, undefined, undefined);
+        var empty_block_longs = longs_init;
+        var empty_block_bits: BitSet = undefined;
+        try BitSet.readWithBuffer(
+            reader,
+            &empty_block_bits,
+            &empty_block_longs,
+            undefined,
+        );
+
+        for (&out.sky) |*section| section.* = .{ .single = 0x0 };
+        for (&out.block) |*section| section.* = .{ .single = 0x0 };
+
+        var len: usize = undefined;
+        try ArrayLenSpec.read(reader, &len, undefined);
+        for (&out.sky, 0..) |*section, i| if (sky_bits.get(i)) {
+            try LenSpec.read(reader, undefined, undefined);
+            section.* = .{ .direct = undefined };
+            try reader.readNoEof(&section.direct);
+            const val = @as(u8, @as(u4, @truncate(section.direct[0]))) * 17;
+            if (allEql(section.direct, val))
+                section.* = .{ .single = @truncate(section.direct[0]) };
+        };
+
+        try ArrayLenSpec.read(reader, &len, undefined);
+        for (&out.block, 0..) |*section, i| if (block_bits.get(i)) {
+            try LenSpec.read(reader, undefined, undefined);
+            section.* = .{ .direct = undefined };
+            try reader.readNoEof(&section.direct);
+            const val = @as(u8, @as(u4, @truncate(section.direct[0]))) * 17;
+            if (allEql(section.direct, val))
+                section.* = .{ .single = @truncate(section.direct[0]) };
+        };
+    }
+    pub fn size(self: UT) usize {
+        var sky_sections: usize = 0;
+        for (&self.sky) |section| {
+            if (section != .single or section.single != 0x0) sky_sections += 1;
+        }
+        var block_sections: usize = 0;
+        for (&self.block) |section| {
+            if (section != .single or section.single != 0x0) block_sections += 1;
+        }
+        return BitSet.size(
+            .{ .data = &([_]u64{undefined} ** BIT_SET_LONG_COUNT) },
+        ) * 4 + ArrayLenSpec.size(sky_sections) + ArrayLenSpec.size(block_sections) +
+            (sky_sections * (LenSpec.size(undefined) + 2048)) +
+            (block_sections * (LenSpec.size(undefined) + 2048));
+    }
+    pub fn deinit(self: *UT, _: Allocator) void {
+        self.* = undefined;
+    }
+};
+
+test "light levels" {
+    try serde.doTestOnValue(LightLevels, .{}, false);
+}
+
 pub const Column = struct {
     sections: [TOTAL_CHUNK_SECTIONS]ChunkSection.UT = [_]ChunkSection.UT{.{
         .block_count = 0,
-        .blocks = .{ .single = @intFromEnum(Block.air) },
+        .blocks = .{ .single = Block.air.defaultStateId() },
         //.biomes = .{ .single = @intFromEnum(Biome.plains) },
         .biomes = .{ .single = 0 },
     }} ** TOTAL_CHUNK_SECTIONS,
@@ -101,6 +321,8 @@ pub const Column = struct {
     motion_blocking: HeightMap = .{},
     world_surface: HeightMap = .{},
 
+    light_levels: LightLevels = .{},
+
     pub fn initFlat() Column {
         var self = Column{};
         for (&[_]Block{
@@ -110,7 +332,7 @@ pub const Column = struct {
         }, 0..) |block, i| {
             const y = @as(BlockY, @intCast(i)) + MIN_Y;
             for (0..16) |z| for (0..16) |x|
-                self.setBlock(@intCast(x), @intCast(z), y, @intFromEnum(block));
+                self.setBlock(@intCast(x), @intCast(z), y, block.defaultStateId());
         }
         return self;
     }
@@ -137,7 +359,6 @@ pub const Column = struct {
         x: BlockAxis,
         z: BlockAxis,
         y: BlockY,
-        // TODO: make this just accept a blockstate?
         value: BlockState.Id,
     ) void {
         assert(y >= MIN_Y and y < MAX_Y);
@@ -404,6 +625,25 @@ test "packed array" {
 
 pub const BlockAxis = u4;
 pub const BiomeAxis = u2;
+pub fn AxisIndex(comptime Axis: type) type {
+    return @Type(.{ .Int = .{
+        .signedness = .unsigned,
+        .bits = @typeInfo(Axis).Int.bits * 3,
+    } });
+}
+pub inline fn axisToIndex(
+    comptime Axis: type,
+    x: Axis,
+    z: Axis,
+    y: Axis,
+) AxisIndex(Axis) {
+    const Index = AxisIndex(Axis);
+    const one_shift: comptime_int = @intCast(@typeInfo(Axis).Int.bits);
+    return (@as(Index, y) << (one_shift * 2)) |
+        (@as(Index, z) << one_shift) |
+        @as(Index, x);
+}
+
 pub fn PalettedContainer(comptime kind: enum { block, biome }) type {
     return union(enum) {
         pub const Count = switch (kind) {
@@ -439,13 +679,6 @@ pub fn PalettedContainer(comptime kind: enum { block, biome }) type {
         pub const IndirectPaletteLen =
             std.math.IntFittingRange(0, MaxIndirectPaletteLength);
 
-        pub inline fn axisToIndex(x: Axis, z: Axis, y: Axis) Index {
-            const one_shift: comptime_int = @intCast(@typeInfo(Axis).Int.bits);
-            return (@as(Index, y) << (one_shift * 2)) |
-                (@as(Index, z) << one_shift) |
-                @as(Index, x);
-        }
-
         pub const IndirectData = PackedArray(MaxIndirectBits, Count);
         pub const PaletteData = std.BoundedArray(Id, MaxIndirectPaletteLength);
         pub const DirectData = PackedArray(16, Count);
@@ -471,7 +704,7 @@ pub fn PalettedContainer(comptime kind: enum { block, biome }) type {
             switch (self.*) {
                 .single => |id| self.* = .{ .indirect = .{
                     .palette = PaletteData.fromSlice(&.{id}) catch unreachable,
-                    .data = IndirectData.init(1),
+                    .data = IndirectData.init(4),
                 } },
                 .indirect => |d| {
                     var direct = DirectData.init(IdBits);
@@ -487,7 +720,7 @@ pub fn PalettedContainer(comptime kind: enum { block, biome }) type {
             }
         }
         pub fn set(self: *Self, x: Axis, z: Axis, y: Axis, value: Id) void {
-            const index = axisToIndex(x, z, y);
+            const index = axisToIndex(Axis, x, z, y);
             switch (self.*) {
                 .single => |id| if (value != id) {
                     self.upgrade(); // upgrade to indirect
@@ -523,7 +756,7 @@ pub fn PalettedContainer(comptime kind: enum { block, biome }) type {
             }
         }
         pub fn get(self: Self, x: Axis, z: Axis, y: Axis) Id {
-            const index = axisToIndex(x, z, y);
+            const index = axisToIndex(Axis, x, z, y);
             return switch (self) {
                 .single => |id| id,
                 .indirect => |d| d.palette.get(@intCast(d.data.get(index))),
@@ -645,13 +878,13 @@ test "paletted container" {
             @intCast(x),
             @intCast(z),
             @intCast(y),
-            ST.axisToIndex(@intCast(x), @intCast(z), @intCast(y)),
+            axisToIndex(ST.Axis, @intCast(x), @intCast(z), @intCast(y)),
         );
     };
     try testing.expect(cont == .direct);
     for (0..16) |y| for (0..16) |z| for (0..16) |x| {
         try testing.expectEqual(
-            @as(ST.Id, ST.axisToIndex(@intCast(x), @intCast(z), @intCast(y))),
+            @as(ST.Id, axisToIndex(ST.Axis, @intCast(x), @intCast(z), @intCast(y))),
             cont.get(@intCast(x), @intCast(z), @intCast(y)),
         );
     };
