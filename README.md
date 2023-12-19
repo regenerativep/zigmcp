@@ -1,7 +1,7 @@
 # zigmcp
 
-A Minecraft (Java Edition) protocol implementation in Zig. Currently supports 1.20.2
-(764). Has a v764 protocol implementation, and a static and dynamic NBT implementation.
+A Minecraft (Java Edition) protocol implementation in Zig. Currently supports 1.20.4
+(765). Contains the protocol implementation, and a static and dynamic NBT implementation.
 Depends on [jdknezek/uuid6-zig](https://github.com/jdknezek/uuid6-zig) and
 [PrismarineJS/minecraft-data](https://github.com/PrismarineJS/minecraft-data).
 

@@ -39,7 +39,7 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(a);
     defer std.process.argsFree(a, args);
 
-    const MinecraftVersion = "1.20.2";
+    const MinecraftVersion = "1.20.4";
     const minecraft_data_path = args[1];
     const out_fname = args[2];
     const datapaths_path = try path.join(a, &.{

@@ -8,8 +8,8 @@
             .hash = "1220d16adaadf91606ff25564b176625afb15feb6c6ba2e54ab16a5ab2c17a5d3215",
         },
         .@"minecraft-data" = .{
-            .url = "https://github.com/PrismarineJS/minecraft-data/archive/cf8333fce886587364e6f510bca72a6e9d555da4.tar.gz",
-            .hash = "12207680abc3586f793526ada018fe5eef3dc0d8fa6ac7c1b96c834fcb846442ef96",
+            .url = "https://github.com/PrismarineJS/minecraft-data/archive/f851a09e3042247d42ab4f2775f986d39b45b39e.tar.gz",
+            .hash = "12200d7743546aa01f9fc54a51eb7e58f365ca999ef51399a8fea5b6e9d9bfd508e8",
         },
     },
 }
