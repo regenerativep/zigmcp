@@ -922,17 +922,19 @@ pub const DimensionSpec = StringEnum(struct {
     pub const end = "minecraft:the_end";
 }, Identifier);
 
+pub const Gamemode = enum(u8) {
+    survival = 0,
+    creative = 1,
+    adventure = 2,
+    spectator = 3,
+};
+
 pub const RespawnSpec = serde.Struct(struct {
     // TODO: name probably shouldnt be an enum
     dimension_type: Identifier,
     dimension_name: DimensionSpec,
     hashed_seed: u64,
-    gamemode: enum(u8) {
-        survival = 0,
-        creative = 1,
-        adventure = 2,
-        spectator = 3,
-    },
+    gamemode: Gamemode,
     previous_gamemode: serde.ConstantOptional(enum(u8) {
         survival = 0,
         creative = 1,
@@ -1248,12 +1250,13 @@ pub const PlayerInfoUpdate = struct {
         public_key: PublicKey,
     });
     pub const UpdateDisplayNameSpec = serde.Optional(ChatString);
+    pub const GamemodeSpec = Enum(serde.Casted(VarI32, u8), Gamemode);
     pub const PlayerAction = struct {
         uuid: Uuid.UT,
         add_player: ?AddPlayerSpec.UT = null,
         /// yes, this and update_display_name are optionals of optionals
         initialize_chat: ?InitializeChatSpec.UT = null,
-        update_gamemode: ?VarI32.UT = null,
+        update_gamemode: ?GamemodeSpec.UT = null,
         update_listed: ?bool = null,
         update_latency: ?VarI32.UT = null,
         update_display_name: ?UpdateDisplayNameSpec.UT = null,
@@ -1265,11 +1268,11 @@ pub const PlayerInfoUpdate = struct {
     };
     pub const E = ActionsSpec.E || AddPlayerSpec.E ||
         InitializeChatSpec.E || UpdateDisplayNameSpec.E || VarI32.E ||
-        Uuid.E || serde.Casted(VarI32, usize).E;
+        Uuid.E || serde.Casted(VarI32, usize).E || GamemodeSpec.E;
     const action_specs = .{
         .{ "add_player", AddPlayerSpec },
         .{ "initialize_chat", InitializeChatSpec },
-        .{ "update_gamemode", VarI32 },
+        .{ "update_gamemode", GamemodeSpec },
         .{ "update_listed", serde.Bool },
         .{ "update_latency", VarI32 },
         .{ "update_display_name", UpdateDisplayNameSpec },
