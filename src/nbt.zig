@@ -258,12 +258,16 @@ pub fn List(comptime T: type) type {
             EndOfStream,
             InvalidTag,
         };
-        pub fn write(writer: anytype, in: UT) !void {
+        pub fn write(writer: anytype, in: UT) (E || @TypeOf(writer).Error)!void {
             try writer.writeByte(@intFromEnum(tag));
             try LenSpec.write(writer, in.len);
             for (in) |item| try InnerSpec.write(writer, item);
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+        pub fn read(
+            reader: anytype,
+            out: *UT,
+            a: Allocator,
+        ) (E || Allocator.Error || @TypeOf(reader).Error)!void {
             if ((try Tag.fromInt(try reader.readByte())) != tag)
                 return error.InvalidTag;
             var len: usize = undefined;

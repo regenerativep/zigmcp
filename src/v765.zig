@@ -43,10 +43,10 @@ const VarI64 = VarInt(i64);
 
 const MaxNbtDepth = @import("main.zig").MaxNbtDepth;
 
-pub const ProtocolVersion = 764;
-pub const MCVersion = "1.20.2";
+pub const ProtocolVersion = 765;
+pub const MCVersion = "1.20.4";
 
-pub const ChatString = PString(262144);
+pub const Chat = nbt.Named(null, @import("chat.zig").Chat);
 pub const Identifier = PString(32767);
 
 pub fn Registry(comptime name: []const u8, comptime Entry: type) type {
@@ -456,6 +456,8 @@ pub const CommandNode = struct {
             out.data = .{ .argument = undefined };
             try NameSpec.read(reader, &out.data.argument.name, a);
             try ParserSpec.read(reader, &out.data.argument.parser, a);
+        } else {
+            out.data = .{ .root = {} };
         }
         if (flags.has_suggestions_type) {
             out.suggestion = @as(SuggestionsSpec.UT, undefined);
@@ -553,77 +555,83 @@ pub const ParticleId = enum(i32) {
     entity_effect = 21,
     explosion_emitter = 22,
     explosion = 23,
-    sonic_boom = 24,
-    falling_dust = 25,
-    firework = 26,
-    fishing = 27,
-    flame = 28,
-    cherry_leaves = 29,
-    sculk_soul = 30,
-    sculk_charge = 31,
-    sculk_charge_pop = 32,
-    soul_fire_flame = 33,
-    soul = 34,
-    flash = 35,
-    happy_villager = 36,
-    composter = 37,
-    heart = 38,
-    instant_effect = 39,
-    item = 40,
-    vibration = 41,
-    item_slime = 42,
-    item_snowball = 43,
-    large_smoke = 44,
-    lava = 45,
-    mycelium = 46,
-    note = 47,
-    poof = 48,
-    portal = 49,
-    rain = 50,
-    smoke = 51,
-    sneeze = 52,
-    spit = 53,
-    squid_ink = 54,
-    sweep_attack = 55,
-    totem_of_undying = 56,
-    underwater = 57,
-    splash = 58,
-    witch = 59,
-    bubble_pop = 60,
-    current_down = 61,
-    bubble_column_up = 62,
-    nautilus = 63,
-    dolphin = 64,
-    campfire_cosy_smoke = 65,
-    campfire_signal_smoke = 66,
-    dripping_honey = 67,
-    falling_honey = 68,
-    landing_honey = 69,
-    falling_nectar = 70,
-    falling_spore_blossom = 71,
-    ash = 72,
-    crimson_spore = 73,
-    warped_spore = 74,
-    spore_blossom_air = 75,
-    dripping_obsidian_tear = 76,
-    falling_obsidian_tear = 77,
-    landing_obsidian_tear = 78,
-    reverse_portal = 79,
-    white_ash = 80,
-    small_flame = 81,
-    snowflake = 82,
-    dripping_dripstone_lava = 83,
-    falling_dripstone_lava = 84,
-    dripping_dripstone_water = 85,
-    falling_dripstone_water = 86,
-    glow_squid_ink = 87,
-    glow = 88,
-    wax_on = 89,
-    wax_off = 90,
-    electric_spark = 91,
-    scrape = 92,
-    shriek = 93,
-    egg_crack = 94,
+    gust = 24,
+    gust_emitter = 25,
+    sonic_boom,
+    falling_dust,
+    firework,
+    fishing,
+    flame,
+    cherry_leaves,
+    sculk_soul,
+    sculk_charge,
+    sculk_charge_pop,
+    soul_fire_flame,
+    soul,
+    flash,
+    happy_villager,
+    composter,
+    heart,
+    instant_effect,
+    item,
+    vibration,
+    item_slime,
+    item_snowball,
+    large_smoke,
+    lava,
+    mycelium,
+    note,
+    poof,
+    portal,
+    rain,
+    smoke,
+    white_smoke = 54,
+    sneeze,
+    spit,
+    squid_ink,
+    sweep_attack,
+    totem_of_undying,
+    underwater,
+    splash,
+    witch,
+    bubble_pop,
+    current_down,
+    bubble_column_up,
+    nautilus,
+    dolphin,
+    campfire_cosy_smoke,
+    campfire_signal_smoke,
+    dripping_honey,
+    falling_honey,
+    landing_honey,
+    falling_nectar,
+    falling_spore_blossom,
+    ash,
+    crimson_spore,
+    warped_spore,
+    spore_blossom_air,
+    dripping_obsidian_tear,
+    falling_obsidian_tear,
+    landing_obsidian_tear,
+    reverse_portal,
+    white_ash,
+    small_flame,
+    snowflake,
+    dripping_dripstone_lava,
+    falling_dripstone_lava,
+    dripping_dripstone_water,
+    falling_dripstone_water,
+    glow_squid_ink,
+    glow,
+    wax_on,
+    wax_off,
+    electric_spark,
+    scrape,
+    shriek,
+    egg_crack,
+    dust_plume = 98,
+    gust_dust = 99,
+    trial_spawner_detection = 100,
 };
 pub const Particle = serde.Union(union(ParticleId) {
     ambient_entity_effect: void,
@@ -667,6 +675,8 @@ pub const Particle = serde.Union(union(ParticleId) {
     entity_effect: void,
     explosion_emitter: void,
     explosion: void,
+    gust: void,
+    gust_emitter: void,
     sonic_boom: void,
     falling_dust: struct {
         block_state: VarI32,
@@ -713,6 +723,7 @@ pub const Particle = serde.Union(union(ParticleId) {
     portal: void,
     rain: void,
     smoke: void,
+    white_smoke: void,
     sneeze: void,
     spit: void,
     squid_ink: void,
@@ -758,7 +769,16 @@ pub const Particle = serde.Union(union(ParticleId) {
         delay: VarI32,
     },
     egg_crack: void,
+    dust_plume: void,
+    gust_dust: void,
+    trial_spawner_detection: void,
 });
+
+pub const RangedSound = serde.Struct(struct {
+    name: Identifier,
+    fixed_range: ?f32,
+});
+
 pub const WorldEventId = enum(i32) {
     dispenser_dispenses = 1000,
     dispenser_fails = 1001,
@@ -999,8 +1019,8 @@ pub const SoundCategory = serde.Enum(VarU7, enum(u7) {
 });
 
 pub const AdvancementDisplay = serde.Struct(struct {
-    title: ChatString,
-    description: ChatString,
+    title: Chat,
+    description: Chat,
     icon: Slot,
     frame_type: serde.Enum(VarU7, enum(u7) { task = 0, challenge = 1, goal = 2 }),
     flags: struct {
@@ -1249,7 +1269,7 @@ pub const PlayerInfoUpdate = struct {
         chat_session_id: Uuid,
         public_key: PublicKey,
     });
-    pub const UpdateDisplayNameSpec = serde.Optional(ChatString);
+    pub const UpdateDisplayNameSpec = serde.Optional(Chat);
     pub const GamemodeSpec = Enum(serde.Casted(VarI32, u8), Gamemode);
     pub const PlayerAction = struct {
         uuid: Uuid.UT,
@@ -1364,6 +1384,17 @@ pub const PlayerInfoUpdate = struct {
     }
 };
 
+pub const NumberFormat = TaggedUnion(VarU7, union(NumberFormatId) {
+    const NumberFormatId = enum(u7) {
+        blank = 0,
+        styled = 1,
+        fixed = 2,
+    };
+    blank: void,
+    styled: nbt.Dynamic(.compound, MaxNbtDepth),
+    fixed: Chat,
+});
+
 pub const H = struct {
     pub const SBID = enum(u7) {
         handshake = 0x00,
@@ -1429,7 +1460,7 @@ pub const L = struct {
         login_plugin_request = 0x04,
     };
     pub const CB = TaggedUnion(VarU7, union(CBID) {
-        disconnect: ChatString,
+        disconnect: PString(262144),
         encryption_request: struct {
             server_id: PString(20),
             public_key: PrefixedArray(VarI32, u8, .{ .max = 1024 }), // what is actual max here?
@@ -1474,7 +1505,11 @@ pub const C = struct {
             succeeeded = 0,
             declined = 1,
             failed = 2,
-            accepted = 4,
+            accepted = 3,
+            downloaded = 4,
+            invalid_url = 5,
+            failed_to_reload = 6,
+            discarded = 7,
         }),
     });
     pub const CBID = enum(u7) {
@@ -1484,31 +1519,34 @@ pub const C = struct {
         keep_alive = 0x03,
         ping = 0x04,
         registry_data = 0x05,
-        resource_pack = 0x06,
-        feature_flags = 0x07,
-        update_tags = 0x08,
+        remove_resource_pack = 0x06,
+        add_resource_pack = 0x07,
+        feature_flags = 0x08,
+        update_tags = 0x09,
     };
     pub const CB = TaggedUnion(VarU7, union(CBID) {
         plugin_message: struct {
             channel: Identifier,
             data: Remaining(u8, .{ .max = 1048576 }),
         },
-        disconnect: ChatString,
+        disconnect: Chat,
         finish_configuration: void,
         keep_alive: i64,
         ping: i32,
         registry_data: RegistryData,
-        //registry_data: nbt.Named(null, nbt.Dynamic(.any, MaxNbtDepth)),
-        resource_pack: struct {
+        remove_resource_pack: ?Uuid,
+        add_resource_pack: struct {
+            uuid: Uuid,
             url: PString(32767),
             hash: PString(40),
             forced: bool,
-            prompt_message: ?ChatString,
+            prompt_message: ?Chat,
         },
         feature_flags: PrefixedArray(VarI32, StringEnum(struct {
             pub const vanilla = "minecraft:vanilla";
             pub const bundle = "minecraft:bundle";
             pub const trade_rebalance = "minecraft:trade_rebalance";
+            pub const update1_21 = "minecraft:update_1_21";
         }, Identifier), .{}), // max?
         update_tags: Tags,
     });
@@ -1582,53 +1620,57 @@ pub const P = struct {
         update_recipe_book = 0x3F,
         remove_entities = 0x40,
         remove_entity_effect = 0x41,
-        resource_pack = 0x42,
-        respawn = 0x43,
-        set_head_rotation = 0x44,
-        update_section_blocks = 0x45,
-        select_advancements_tab = 0x46,
-        server_data = 0x47,
-        set_action_bar_text = 0x48,
-        set_border_center = 0x49,
-        set_border_lerp_size = 0x4A,
-        set_border_size = 0x4B,
-        set_border_warning_delay = 0x4C,
-        set_border_warning_distance = 0x4D,
-        set_camera = 0x4E,
-        set_held_item = 0x4F,
-        set_center_chunk = 0x50,
-        set_render_distance = 0x51,
-        set_default_spawn_position = 0x52,
-        display_objective = 0x53,
-        set_entity_metadata = 0x54,
-        link_entities = 0x55,
-        set_entity_velocity = 0x56,
-        set_equipment = 0x57,
-        set_experience = 0x58,
-        set_health = 0x59,
-        update_objectives = 0x5A,
-        set_passengers = 0x5B,
-        update_teams = 0x5C,
-        update_score = 0x5D,
-        set_simulation_distance = 0x5E,
-        set_subtitle_text = 0x5F,
-        update_time = 0x60,
-        set_title_text = 0x61,
-        set_title_animation_times = 0x62,
-        entity_sound_effect = 0x63,
-        sound_effect = 0x64,
-        start_configuration = 0x65,
-        stop_sound = 0x66,
-        system_chat_message = 0x67,
-        set_tab_list_header_and_footer = 0x68,
-        tag_query_response = 0x69,
-        pickup_item = 0x6A,
-        teleport_entity = 0x6B,
-        update_advancements = 0x6C,
-        update_attributes = 0x6D,
-        entity_effect = 0x6E,
-        update_recipes = 0x6F,
-        update_tags = 0x70,
+        reset_score = 0x42,
+        remove_resource_pack,
+        add_resource_pack,
+        respawn,
+        set_head_rotation,
+        update_section_blocks,
+        select_advancements_tab,
+        server_data,
+        set_action_bar_text,
+        set_border_center,
+        set_border_lerp_size,
+        set_border_size,
+        set_border_warning_delay,
+        set_border_warning_distance,
+        set_camera,
+        set_held_item,
+        set_center_chunk,
+        set_render_distance,
+        set_default_spawn_position,
+        display_objective,
+        set_entity_metadata,
+        link_entities,
+        set_entity_velocity,
+        set_equipment,
+        set_experience,
+        set_health,
+        update_objectives,
+        set_passengers,
+        update_teams,
+        update_score,
+        set_simulation_distance,
+        set_subtitle_text,
+        update_time,
+        set_title_text,
+        set_title_animation_times,
+        entity_sound_effect,
+        sound_effect,
+        start_configuration,
+        stop_sound,
+        system_chat_message,
+        set_tab_list_header_and_footer,
+        tag_query_response,
+        pickup_item,
+        teleport_entity,
+        set_ticking_state = 0x6E,
+        step_tick = 0x6F,
+        update_advancements,
+        update_attributes,
+        entity_effect,
+        update_recipes,
+        update_tags,
     };
     pub const CB_ = serde.Struct(struct { // TODO: tbc here. its failing to build
         // debug or releasefast but works on
@@ -1809,7 +1851,7 @@ pub const P = struct {
                     update_flags = 5,
                 };
                 add: struct {
-                    title: ChatString,
+                    title: Chat,
                     health: f32,
                     color: Color,
                     division: Division,
@@ -1817,7 +1859,7 @@ pub const P = struct {
                 },
                 remove: void,
                 update_health: f32,
-                update_title: ChatString,
+                update_title: Chat,
                 update_style: struct {
                     color: Color,
                     division: Division,
@@ -1846,7 +1888,7 @@ pub const P = struct {
             length: VarI32,
             matches: PrefixedArray(VarI32, struct {
                 match: PString(32767),
-                tooltip: ?ChatString,
+                tooltip: ?Chat,
             }, .{}),
         },
         commands: struct {
@@ -1930,12 +1972,12 @@ pub const P = struct {
                 };
             }
         },
-        disconnect: ChatString,
+        disconnect: Chat,
         disguised_chat_message: struct {
-            message: ChatString,
+            message: Chat,
             chat_type: VarI32,
-            sender_name: ChatString,
-            target_name: ?ChatString,
+            sender_name: Chat,
+            target_name: ?Chat,
         },
         entity_event: struct {
             entity_id: i32,
@@ -2004,6 +2046,21 @@ pub const P = struct {
             strength: f32,
             records: PrefixedArray(VarI32, V3(i8), .{}),
             player_motion: V3(f32),
+            block_interaction: Enum(VarU7, enum(u7) {
+                keep = 0,
+                destroy = 1,
+                destroy_with_decay = 2,
+                trigger_block = 3,
+            }),
+            small_explosion_particle: serde.Pass(
+                Enum(VarI32, Particle.EnumT),
+                Particle,
+            ),
+            large_explosion_particle: serde.Pass(
+                Enum(VarI32, Particle.EnumT),
+                Particle,
+            ),
+            explosion_sound: RangedSound,
         },
         unload_chunk: struct {
             chunk_z: i32,
@@ -2024,6 +2081,7 @@ pub const P = struct {
                 play_elder_guardian_appearance = 10,
                 enable_respawn_screen = 11,
                 limited_crafting = 12,
+                start_waiting_for_level_chunks = 13,
             };
             no_respawn_block: f32,
             begin_raining: f32,
@@ -2058,6 +2116,7 @@ pub const P = struct {
                 pub const disable = 0;
                 pub const enable = 1;
             }, f32, null),
+            start_waiting_for_level_chunks: f32,
         },
         open_horse_screen: struct {
             window_id: u8,
@@ -2173,7 +2232,7 @@ pub const P = struct {
                     x: i8,
                     z: i8,
                     direction: serde.Casted(i8, u4),
-                    display_name: ?ChatString,
+                    display_name: ?Chat,
                 }, .{}),
             },
             // TODO: make a zig issue about a reduced version of this?
@@ -2291,7 +2350,7 @@ pub const P = struct {
                 pub const cartography = 22;
                 pub const stonecutter = 23;
             }, VarI32, null),
-            window_title: ChatString,
+            window_title: Chat,
         },
         open_sign_editor: struct {
             location: Position,
@@ -2319,7 +2378,7 @@ pub const P = struct {
                 PlusOne(serde.ConstantOptional(VarI32, 0, null)),
                 [256]u8,
             ), .{ .max = 20 }),
-            unsigned_content: ?ChatString,
+            unsigned_content: ?Chat,
             filter: serde.TaggedUnion(VarU7, union(FilterType) {
                 pub const FilterType = enum(u7) {
                     pass_through = 0,
@@ -2331,8 +2390,8 @@ pub const P = struct {
                 partially_filtered: BitSet,
             }),
             chat_type: VarI32,
-            sender_name: ChatString,
-            target_name: ?ChatString,
+            sender_name: Chat,
+            target_name: ?Chat,
         },
         end_combat: struct {
             duration: VarI32,
@@ -2340,7 +2399,7 @@ pub const P = struct {
         enter_combat: void,
         combat_death: struct {
             player_id: VarI32,
-            message: ChatString,
+            message: Chat,
         },
         player_info_remove: PrefixedArray(VarI32, Uuid, .{}),
         player_info_update: PlayerInfoUpdate,
@@ -2397,11 +2456,17 @@ pub const P = struct {
             entity_id: VarI32,
             effect: serde.Enum(serde.Casted(VarI32, Effect.Id), Effect),
         },
-        resource_pack: struct {
+        reset_score: struct {
+            entity_name: PString(32767),
+            objective_name: ?PString(32767),
+        },
+        remove_resource_pack: ?Uuid,
+        add_resource_pack: struct {
+            uuid: Uuid,
             url: PString(32767),
             hash: PString(40),
             forced: bool,
-            prompt_message: ?ChatString,
+            prompt_message: ?Chat,
         },
         respawn: struct {
             data: RespawnSpec,
@@ -2444,11 +2509,11 @@ pub const P = struct {
             pub const husbandry = "minecraft:husbandry/root";
         }, Identifier),
         server_data: struct {
-            motd: ChatString,
+            motd: Chat,
             icon: ?PrefixedArray(VarI32, u8, .{}),
             enforces_secure_chat: bool,
         },
-        set_action_bar_text: ChatString,
+        set_action_bar_text: Chat,
         set_border_center: struct {
             x: f64,
             z: f64,
@@ -2525,8 +2590,8 @@ pub const P = struct {
                     varlong: VarI64,
                     float: f32,
                     string: PString(null),
-                    chat: ChatString,
-                    opt_chat: ?ChatString,
+                    chat: Chat,
+                    opt_chat: ?Chat,
                     slot: Slot,
                     boolean: bool,
                     rotation: V3(f32),
@@ -2571,6 +2636,9 @@ pub const P = struct {
                         sniffing = 12,
                         emerging = 13,
                         digging = 14,
+                        sliding = 15,
+                        shooting = 16,
+                        inhaling = 17,
                     }),
 
                     // found in generated/reports/registries.json
@@ -2803,8 +2871,9 @@ pub const P = struct {
                 };
 
                 const Value = serde.Struct(struct {
-                    value: ChatString,
+                    value: Chat,
                     type: serde.Enum(VarU7, enum(u7) { integer = 0, hearts = 1 }),
+                    number_format: ?NumberFormat,
                 });
 
                 create: Value,
@@ -2827,7 +2896,7 @@ pub const P = struct {
                     remove_entities = 4,
                 };
                 const TeamInfoSpec = serde.Struct(struct {
-                    display_name: ChatString,
+                    display_name: Chat,
                     friendly_flags: packed struct(u8) {
                         allow_friendly_fire: bool,
                         see_invisible_team_members: bool,
@@ -2869,8 +2938,8 @@ pub const P = struct {
                         italic = 20,
                         reset = 21,
                     }),
-                    prefix: ChatString,
-                    suffix: ChatString,
+                    prefix: Chat,
+                    suffix: Chat,
                 });
                 const EntitiesSpec = PrefixedArray(VarI32, PString(32767), .{});
                 create: struct {
@@ -2885,24 +2954,18 @@ pub const P = struct {
         },
         update_score: struct {
             entity_name: PString(32767),
-            action: serde.TaggedUnion(VarU7, union(Action) {
-                const Action = enum(u7) { create_or_update = 0, remove = 1 };
-                create_or_update: struct {
-                    objective_name: PString(32767),
-                    value: VarI32,
-                },
-                remove: struct {
-                    objective_name: PString(32767),
-                },
-            }),
+            objective_name: PString(32767),
+            value: VarI32,
+            display_name: ?Chat,
+            number_format: ?NumberFormat,
         },
         set_simulation_distance: VarI32,
-        set_subtitle_text: ChatString,
+        set_subtitle_text: Chat,
         update_time: struct {
             world_age: i64,
             time_of_day: i64,
         },
-        set_title_text: ChatString,
+        set_title_text: Chat,
         set_title_animation_times: struct {
             fade_in: i32,
             stay: i32,
@@ -2911,10 +2974,7 @@ pub const P = struct {
         entity_sound_effect: struct {
             sound: serde.OptionalUnion(
                 PlusOne(serde.ConstantOptional(VarI32, 0, null)),
-                struct {
-                    name: Identifier,
-                    range: ?f32,
-                },
+                RangedSound,
             ),
             category: SoundCategory,
             entity_id: VarI32,
@@ -2925,10 +2985,7 @@ pub const P = struct {
         sound_effect: struct {
             sound: serde.OptionalUnion(
                 PlusOne(serde.ConstantOptional(VarI32, 0, null)),
-                struct {
-                    name: Identifier,
-                    range: ?f32,
-                },
+                RangedSound,
             ),
             category: SoundCategory,
             effect_position: V3(i32),
@@ -2984,12 +3041,12 @@ pub const P = struct {
             }
         },
         system_chat_message: struct {
-            content: ChatString,
+            content: Chat,
             is_action_bar: bool,
         },
         set_tab_list_header_and_footer: struct {
-            header: ChatString,
-            footer: ChatString,
+            header: Chat,
+            footer: Chat,
         },
         tag_query_response: struct {
             transaction_id: VarI32,
@@ -3007,6 +3064,11 @@ pub const P = struct {
             pitch: Angle,
             on_ground: bool,
         },
+        set_ticking_state: struct {
+            tick_rate: f32,
+            is_frozen: bool,
+        },
+        step_tick: VarI32,
         update_advancements: struct {
             reset: bool,
             advancement_mappings: PrefixedArray(VarI32, struct {
@@ -3059,6 +3121,7 @@ pub const P = struct {
             entity_id: VarI32,
             effect: serde.Enum(serde.Casted(VarI32, Effect.Id), Effect),
             amplifier: i8,
+            duration: serde.ConstantOptional(VarI32, -1, null),
             flags: packed struct(u8) {
                 ambient: bool,
                 show_particles: bool,
@@ -3113,20 +3176,20 @@ pub const P = struct {
                         Ingredients.E || serde.Bool.E || Slot.E;
 
                     pub fn write(writer: anytype, in: UT) !void {
-                        try LenSpec.write(writer, in.width);
-                        try LenSpec.write(writer, in.height);
                         try Group.write(writer, in.group);
                         try RecipeCategory.write(writer, in.category);
+                        try LenSpec.write(writer, in.width);
+                        try LenSpec.write(writer, in.height);
                         for (in.ingredients) |item| try Ingredient.write(writer, item);
                         try Slot.write(writer, in.result);
                         try serde.Bool.write(writer, in.show_notification);
                     }
                     pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
-                        try LenSpec.read(reader, &out.width, undefined);
-                        try LenSpec.read(reader, &out.height, undefined);
                         try Group.read(reader, &out.group, a);
                         errdefer Group.deinit(&out.group, a);
                         try RecipeCategory.read(reader, &out.category, undefined);
+                        try LenSpec.read(reader, &out.width, undefined);
+                        try LenSpec.read(reader, &out.height, undefined);
 
                         const ingr = try a.alloc(Ingredient.UT, out.width * out.height);
                         errdefer a.free(ingr);
@@ -3228,45 +3291,46 @@ pub const P = struct {
         click_container_button = 0x0C,
         click_container = 0x0D,
         close_container = 0x0E,
-        plugin_message = 0x0F,
-        edit_book = 0x10,
-        query_entity_tag = 0x11,
-        interact = 0x12,
-        jigsaw_generate = 0x13,
-        keep_alive = 0x14,
-        lock_difficulty = 0x15,
-        set_player_position = 0x16,
-        set_player_position_and_rotation = 0x17,
-        set_player_rotation = 0x18,
-        set_player_on_ground = 0x19,
-        move_vehicle = 0x1A,
-        paddle_boat = 0x1B,
-        pick_item = 0x1C,
-        ping_request = 0x1D,
-        place_recipe = 0x1E,
-        player_abilities = 0x1F,
-        player_action = 0x20,
-        player_command = 0x21,
-        player_input = 0x22,
-        pong = 0x23,
-        change_recipe_book_settings = 0x24,
-        set_seen_recipe = 0x25,
-        rename_item = 0x26,
-        resource_pack_response = 0x27,
-        seen_advancements = 0x28,
-        select_trade = 0x29,
-        set_beacon_effect = 0x2A,
-        set_held_item = 0x2B,
-        program_command_block = 0x2C,
-        program_command_block_minecart = 0x2D,
-        set_creative_mode_slot = 0x2E,
-        program_jigsaw_block = 0x2F,
-        program_structure_block = 0x30,
-        update_sign = 0x31,
-        swing_arm = 0x32,
-        teleport_to_entity = 0x33,
-        use_item_on = 0x34,
-        use_item = 0x35,
+        change_container_slot_state = 0x0F,
+        plugin_message,
+        edit_book,
+        query_entity_tag,
+        interact,
+        jigsaw_generate,
+        keep_alive,
+        lock_difficulty,
+        set_player_position,
+        set_player_position_and_rotation,
+        set_player_rotation,
+        set_player_on_ground,
+        move_vehicle,
+        paddle_boat,
+        pick_item,
+        ping_request,
+        place_recipe,
+        player_abilities,
+        player_action,
+        player_command,
+        player_input,
+        pong,
+        change_recipe_book_settings,
+        set_seen_recipe,
+        rename_item,
+        resource_pack_response,
+        seen_advancements,
+        select_trade,
+        set_beacon_effect,
+        set_held_item,
+        program_command_block,
+        program_command_block_minecart,
+        set_creative_mode_slot,
+        program_jigsaw_block,
+        program_structure_block,
+        update_sign,
+        swing_arm,
+        teleport_to_entity,
+        use_item_on,
+        use_item,
     };
     pub const SB = TaggedUnion(VarU7, union(SBID) {
         confirm_teleportation: struct {
@@ -3344,6 +3408,11 @@ pub const P = struct {
         },
         close_container: struct {
             window_id: u8,
+        },
+        change_container_slot_state: struct {
+            slot_id: VarI32,
+            window_id: VarI32,
+            state: bool,
         },
         plugin_message: struct {
             channel: Identifier,
@@ -3488,11 +3557,15 @@ pub const P = struct {
             item_name: PString(32767),
         },
         resource_pack_response: struct {
+            uuid: Uuid,
             result: Enum(VarU7, enum(u7) {
                 success = 0,
                 declined = 1,
                 failed = 2,
                 accepted = 3,
+                invalid_url = 4,
+                failed_to_reload = 5,
+                discarded = 6,
             }),
         },
         seen_advancements: TaggedUnion(VarU7, union(Action) {
@@ -3539,6 +3612,8 @@ pub const P = struct {
             pool: Identifier,
             final_state: PString(32767),
             joint_type: PString(32767),
+            selection_priority: VarI32,
+            placement_priority: VarI32,
         },
         program_structure_block: struct {
             location: Position,

@@ -2,8 +2,8 @@ const std = @import("std");
 const root = @import("root");
 const testing = std.testing;
 
-pub const v764 = @import("v764.zig");
-pub const vlatest = v764;
+pub const v765 = @import("v765.zig");
+pub const vlatest = v765;
 
 pub const chunk = @import("chunk.zig");
 pub const serde = @import("serde.zig");
