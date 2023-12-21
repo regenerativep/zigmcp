@@ -36,6 +36,7 @@ pub const BlockState = generated.BlockState;
 pub const Biome = generated.Biome;
 pub const Dimension = generated.Dimension;
 pub const Effect = generated.Effect;
+pub const Entity = generated.Entity;
 
 const VarU7 = VarInt(u7);
 const VarI32 = VarInt(i32);
@@ -921,20 +922,6 @@ pub const WorldEvent = serde.Union(union(WorldEventId) {
     copper_remove_wax: I320,
     copper_scrape_oxidation: I320,
 });
-//pub const LightLevels = serde.Struct(struct {
-//    sky_light_mask: BitSet,
-//    block_light_mask: BitSet,
-//    empty_sky_light_mask: BitSet,
-//    empty_block_light_mask: BitSet,
-//    sky_lights: PrefixedArray(VarI32, struct {
-//        len: serde.Constant(VarI32, 2048, null),
-//        data: [2048]u8,
-//    }, .{}),
-//    block_lights: PrefixedArray(VarI32, struct {
-//        len: serde.Constant(VarI32, 2048, null),
-//        data: [2048]u8,
-//    }, .{}),
-//});
 
 pub const DimensionSpec = StringEnum(struct {
     pub const overworld = "minecraft:overworld";
@@ -1683,7 +1670,7 @@ pub const P = struct {
         spawn_entity: struct {
             entity_id: VarI32,
             entity_uuid: Uuid,
-            type: VarI32,
+            type: serde.Enum(serde.Casted(VarI32, Entity.Id), Entity),
             position: V3(f64),
             pitch: Angle,
             yaw: Angle,
@@ -1804,6 +1791,7 @@ pub const P = struct {
         },
         block_entity_data: struct {
             location: Position,
+            // TODO: block entity type is in registries.json
             type: VarI32,
             data: nbt.Named(null, nbt.Dynamic(.any, MaxNbtDepth)),
         },
@@ -2387,7 +2375,7 @@ pub const P = struct {
                 };
                 pass_through: void,
                 fully_filtered: void,
-                partially_filtered: BitSet,
+                partially_filtered: BitSet(256),
             }),
             chat_type: VarI32,
             sender_name: Chat,
@@ -3353,7 +3341,7 @@ pub const P = struct {
                 signature: [256]u8,
             }, .{ .max = 8 }),
             message_count: VarI32,
-            acknowledged: BitSet, // TODO: this has a maximum
+            acknowledged: BitSet(20),
         },
         chat_message: struct {
             message: PString(256),
@@ -3361,7 +3349,7 @@ pub const P = struct {
             salt: i64,
             signature: ?[256]u8,
             message_count: VarI32,
-            acknowledged: BitSet, // TODO: this has a maximum
+            acknowledged: BitSet(20),
         },
         player_session: struct {
             session_id: Uuid,

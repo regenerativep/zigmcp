@@ -7,7 +7,7 @@ const testing = std.testing;
 
 const serde = @import("serde.zig");
 
-const BitSet = @import("mcserde.zig").BitSet;
+const BitSet = @import("mcserde.zig").BitSet(256);
 
 const VarI32 = @import("varint.zig").VarInt(i32);
 const nbt = @import("nbt.zig");
@@ -98,8 +98,6 @@ fn allEql(arr: anytype, value: std.meta.Child(@TypeOf(arr))) bool {
 pub const LightLevels = struct {
     pub const UT = @This();
     const LenSpec = serde.Constant(VarI32, 2048, null);
-    const BIT_SET_LONG_COUNT = BitSet.longCount(TOTAL_CHUNK_SECTIONS + 2);
-    const BitSetLenSpec = serde.Constant(VarI32, BIT_SET_LONG_COUNT, null);
     pub const ArrayLenSpec = serde.RestrictInt(
         serde.Casted(VarI32, usize),
         .{ .max = TOTAL_CHUNK_SECTIONS + 2 },
@@ -150,12 +148,10 @@ pub const LightLevels = struct {
     sky: [TOTAL_CHUNK_SECTIONS + 2]Section =
         [_]Section{.{ .single = 0xF }} ** (TOTAL_CHUNK_SECTIONS + 2),
 
-    const longs_init = [_]u64{0} ** BIT_SET_LONG_COUNT;
     pub fn write(writer: anytype, in: UT) !void {
-        var longs = longs_init;
-        var mask = BitSet{ .data = &longs };
 
         // sky light mask
+        var mask = BitSet.initEmpty(in.sky.len);
         var sky_light_count: i32 = 0;
         for (&in.sky, 0..) |section, i|
             if (section != .single or section.single != 0x0) {
@@ -165,7 +161,7 @@ pub const LightLevels = struct {
         try BitSet.write(writer, mask);
 
         // block light mask
-        longs = longs_init;
+        mask = BitSet.initEmpty(in.block.len);
         var block_light_count: i32 = 0;
         for (&in.block, 0..) |section, i|
             if (section != .single or section.single != 0x0) {
@@ -175,14 +171,14 @@ pub const LightLevels = struct {
         try BitSet.write(writer, mask);
 
         // empty sky light mask
-        longs = longs_init;
+        mask = BitSet.initEmpty(in.sky.len);
         for (&in.sky, 0..) |section, i|
             if (section == .single and section.single == 0x0)
                 mask.set(i);
         try BitSet.write(writer, mask);
 
         // empty block light mask
-        longs = longs_init;
+        mask = BitSet.initEmpty(in.block.len);
         for (&in.block, 0..) |section, i|
             if (section == .single and section.single == 0x0)
                 mask.set(i);
@@ -216,48 +212,20 @@ pub const LightLevels = struct {
     }
     pub fn read(reader: anytype, out: *UT, _: Allocator) !void {
         // sky light mask
-        try BitSetLenSpec.read(reader, undefined, undefined);
-        var sky_longs = longs_init;
         var sky_bits: BitSet = undefined;
-        try BitSet.readWithBuffer(
-            reader,
-            &sky_bits,
-            &sky_longs,
-            undefined,
-        );
+        try BitSet.read(reader, &sky_bits, undefined);
 
         // block light mask
-        try BitSetLenSpec.read(reader, undefined, undefined);
-        var block_longs = longs_init;
         var block_bits: BitSet = undefined;
-        try BitSet.readWithBuffer(
-            reader,
-            &block_bits,
-            &block_longs,
-            undefined,
-        );
+        try BitSet.read(reader, &block_bits, undefined);
 
         // empty sky light mask
-        try BitSetLenSpec.read(reader, undefined, undefined);
-        var empty_sky_longs = longs_init;
         var empty_sky_bits: BitSet = undefined;
-        try BitSet.readWithBuffer(
-            reader,
-            &empty_sky_bits,
-            &empty_sky_longs,
-            undefined,
-        );
+        try BitSet.read(reader, &empty_sky_bits, undefined);
 
         // empty sky light mask
-        try BitSetLenSpec.read(reader, undefined, undefined);
-        var empty_block_longs = longs_init;
         var empty_block_bits: BitSet = undefined;
-        try BitSet.readWithBuffer(
-            reader,
-            &empty_block_bits,
-            &empty_block_longs,
-            undefined,
-        );
+        try BitSet.read(reader, &empty_block_bits, undefined);
 
         for (&out.sky) |*section| section.* = .{ .single = 0x0 };
         for (&out.block) |*section| section.* = .{ .single = 0x0 };
@@ -292,9 +260,9 @@ pub const LightLevels = struct {
         for (&self.block) |section| {
             if (section != .single or section.single != 0x0) block_sections += 1;
         }
-        return BitSet.size(
-            .{ .data = &([_]u64{undefined} ** BIT_SET_LONG_COUNT) },
-        ) * 4 + ArrayLenSpec.size(sky_sections) + ArrayLenSpec.size(block_sections) +
+        return (BitSet.initEmpty(self.sky.len).size() * 2) +
+            (BitSet.initEmpty(self.block.len).size() * 2) +
+            ArrayLenSpec.size(sky_sections) + ArrayLenSpec.size(block_sections) +
             (sky_sections * (LenSpec.size(undefined) + 2048)) +
             (block_sections * (LenSpec.size(undefined) + 2048));
     }

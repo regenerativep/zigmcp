@@ -12,50 +12,58 @@ const PrefixedArray = serde.PrefixedArray;
 
 const VarI32 = @import("varint.zig").VarInt(i32);
 
-pub const BitSet = struct {
-    pub const ListSpec = PrefixedArray(VarI32, u64, .{});
+pub fn BitSet(comptime capacity: comptime_int) type {
+    return struct {
+        pub const E = error{EndOfStream};
+        pub const UT = @This();
+        pub const MaxLongs = longCount(capacity);
+        pub const Length = math.IntFittingRange(0, MaxLongs);
+        pub const LengthSpec = serde.RestrictInt(
+            serde.Casted(VarI32, Length),
+            .{ .max = MaxLongs },
+        );
 
-    pub const E = ListSpec.E;
-    pub const UT = @This();
+        buffer: [MaxLongs]u64 = .{0} ** MaxLongs,
+        len: Length = 0,
 
-    data: []const u64,
+        pub fn write(writer: anytype, in: UT) !void {
+            try LengthSpec.write(writer, in.len);
+            for (in.buffer[0..in.len]) |d| try writer.writeInt(u64, d, .big);
+        }
+        pub fn read(reader: anytype, out: *UT, _: Allocator) !void {
+            try LengthSpec.read(reader, &out.len, undefined);
+            for (out.buffer[0..out.len]) |*d| d.* = try reader.readInt(u64, .big);
+        }
+        pub fn size(self: UT) usize {
+            return LengthSpec.size(self.len) + (@sizeOf(u64) * @as(usize, self.len));
+        }
+        pub fn deinit(self: *UT, _: Allocator) void {
+            self.* = undefined;
+        }
 
-    pub fn write(writer: anytype, in: UT) !void {
-        try ListSpec.write(writer, in.data);
-    }
-    pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
-        try ListSpec.read(reader, &out.data, a);
-    }
-    pub fn size(self: UT) usize {
-        return ListSpec.size(self.data);
-    }
-    pub fn deinit(self: *UT, a: Allocator) void {
-        ListSpec.deinit(&self.data, a);
-    }
+        pub inline fn longCount(bit_count: usize) usize {
+            return (bit_count + 63) >> 6;
+        }
 
-    pub inline fn longCount(bit_count: usize) usize {
-        return (bit_count + 63) >> 6;
-    }
-
-    pub fn readWithBuffer(reader: anytype, out: *UT, data: []u64, a: Allocator) !void {
-        try ListSpec.TargetSpec.readWithBuffer(reader, &out.data, data, a);
-    }
-
-    pub fn initEmpty(a: Allocator, bit_count: usize) UT {
-        const data = try a.alloc(u64, longCount(bit_count));
-        @memset(data, 0);
-        return .{ .data = data };
-    }
-    pub fn get(self: UT, i: usize) bool {
-        return (self.data[i >> 6] & (@as(u64, 1) << @as(u6, @truncate(i)))) != 0;
-    }
-    pub fn set(self: *UT, i: usize) void {
-        @constCast(self.data)[i >> 6] |= @as(u64, 1) << @as(u6, @truncate(i));
-    }
-    pub fn unset(self: *UT, i: usize) void {
-        @constCast(self.data)[i >> 6] &= ~(@as(u64, 1) << @as(u6, @truncate(i)));
-    }
-};
+        pub fn initEmpty(bit_count: usize) UT {
+            return .{
+                .len = @intCast(longCount(bit_count)),
+            };
+        }
+        pub fn get(self: UT, i: usize) bool {
+            assert(i >> 6 < self.len);
+            return (self.buffer[i >> 6] & (@as(u64, 1) << @as(u6, @truncate(i)))) != 0;
+        }
+        pub fn set(self: *UT, i: usize) void {
+            assert(i >> 6 < self.len);
+            self.buffer[i >> 6] |= @as(u64, 1) << @as(u6, @truncate(i));
+        }
+        pub fn unset(self: *UT, i: usize) void {
+            assert(i >> 6 < self.len);
+            self.buffer[i >> 6] &= ~(@as(u64, 1) << @as(u6, @truncate(i)));
+        }
+    };
+}
 
 /// String serialization type, because the protocol works with codepoint counts, not byte counts
 pub fn PString(comptime max_len_opt: ?comptime_int) type {

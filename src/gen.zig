@@ -55,6 +55,8 @@ pub fn main() !void {
 
     var datapaths_obj =
         datapaths_json.value.object.get("pc").?.object.get(MinecraftVersion).?.object;
+
+    // --- file paths
     const blocks_path = try path.join(a, &.{
         minecraft_data_path,
         datapaths_obj.get("blocks").?.string,
@@ -73,6 +75,14 @@ pub fn main() !void {
         "effects.json",
     });
     defer a.free(effects_path);
+    const entities_path = try path.join(a, &.{
+        minecraft_data_path,
+        datapaths_obj.get("entities").?.string,
+        "entities.json",
+    });
+    defer a.free(entities_path);
+
+    // --- load json for each path
 
     const blocks_data = try readFileData(a, blocks_path);
     defer a.free(blocks_data);
@@ -142,6 +152,21 @@ pub fn main() !void {
         type: enum { good, bad },
     }, a, effects_data, .{});
     defer effects_json.deinit();
+
+    const entities_data = try readFileData(a, entities_path);
+    defer a.free(entities_data);
+
+    const entities_json = try json.parseFromSlice([]const struct {
+        id: usize,
+        internalId: ?usize = null,
+        name: []const u8,
+        displayName: []const u8,
+        width: f64,
+        height: f64,
+        type: []const u8,
+        category: []const u8,
+    }, a, entities_data, .{});
+    defer entities_json.deinit();
 
     var outf = (if (std.mem.startsWith(u8, out_fname, "/"))
         std.fs.createFileAbsolute(out_fname, .{})
@@ -493,6 +518,33 @@ pub fn main() !void {
             try w.writeAll(",\n");
         };
         try w.print(" " ** 12 ++ "=> .{s},\n\n", .{@tagName(kind)});
+    }
+    const enroot = entities_json.value;
+    var max_entity_id: usize = 0;
+    try w.writeAll(
+        \\        };
+        \\    }
+        \\};
+        \\
+        \\pub const Entity = enum(Id) {
+        \\
+    );
+    for (enroot) |v| {
+        if (v.id > max_entity_id) max_entity_id = v.id;
+        try w.print(" " ** 4 ++ "{s} = {},\n", .{ v.name, v.id });
+    }
+    try w.print(
+        "\n" ++ (" " ** 4) ++ "pub const Id = u{};\n",
+        .{math.log2_int_ceil(usize, max_entity_id + 1)},
+    );
+    try w.writeAll(
+        \\    
+        \\    pub fn displayName(self: Entity) [:0]const u8 {
+        \\        return switch(self) {
+        \\
+    );
+    for (enroot) |v| {
+        try w.print(" " ** 12 ++ ".{s} => \"{s}\",\n", .{ v.name, v.displayName });
     }
     try w.writeAll(
         \\        };
