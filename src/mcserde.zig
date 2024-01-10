@@ -101,7 +101,7 @@ pub const Uuid = struct {
         @memcpy(buf[ofp.len..][0..username.len], username);
         var uuid: UT = undefined;
         std.crypto.hash.Md5.hash(buf[0 .. ofp.len + username.len], &uuid.bytes, .{});
-        uuid.setVersion(3);
+        uuid.setVersion(.name_based_md5);
         uuid.setVariant(.rfc4122);
         return uuid;
     }
