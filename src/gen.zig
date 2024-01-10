@@ -165,6 +165,7 @@ pub fn main() !void {
         height: f64,
         type: []const u8,
         category: []const u8,
+        metadataKeys: []const []const u8,
     }, a, entities_data, .{});
     defer entities_json.deinit();
 

@@ -13,7 +13,7 @@ pub const packetio = @import("packetio.zig");
 
 pub const MaxNbtDepth = if (@hasDecl(root, "MaxNbtDepth")) root.MaxNbtDepth else 32;
 
-// this fn isnt specific to minecraft protocol
+// this fn isnt part of minecraft protocol impl
 pub fn debugPrint(
     writer: anytype,
     data: anytype,
@@ -45,32 +45,22 @@ pub fn debugPrint(
             }
             const slice = if (info == .Pointer) data else &data;
             if (std.meta.Child(T) == u8) {
-                try writer.writeByte('"');
-                for (slice) |b| {
-                    // TODO: handle unicode
-                    switch (b) {
-                        '\n' => try writer.writeAll("\n"),
-                        '\t' => try writer.writeAll("\t"),
-                        '\r' => try writer.writeAll("\r"),
-                        '"' => try writer.writeAll("\\\""),
-                        '\\' => try writer.writeAll("\\\\"),
-                        else => {
-                            if (std.ascii.isPrint(b)) {
-                                try writer.writeByte(b);
-                            } else {
-                                try writer.print("\\0x{X:0>2}", .{b});
-                            }
-                        },
-                    }
-                }
-                try writer.writeByte('"');
+                try writeStringEscaped(writer, slice);
             } else {
                 try writer.writeAll((if (info == .Pointer) "&" else "") ++ ".{");
                 if (slice.len > 0) {
                     try writer.print(" // {}\n", .{slice.len});
                     for (slice) |elem| {
                         try writer.writeByteNTimes(' ', depth * 2 + 2);
-                        try debugPrint(writer, elem, depth + 1);
+                        if (T == nbt.DynamicCompound.UT) {
+                            // TODO: if elem.name is not [a-zA-Z_][a-zA-Z_0-9]* then
+                            //     do .@"..." syntax. probably should be done for
+                            //     non-nbt as well
+                            try writer.print(".{s} = ", .{elem.name});
+                            try debugPrint(writer, elem.value, depth + 1);
+                        } else {
+                            try debugPrint(writer, elem, depth + 1);
+                        }
                         try writer.writeAll(",\n");
                     }
                     try writer.writeByteNTimes(' ', depth * 2);
@@ -103,25 +93,64 @@ pub fn debugPrint(
             try writer.writeAll("}");
         },
         .Union => {
-            try writer.writeAll(".{\n");
-            try writer.writeByteNTimes(' ', depth * 2 + 2);
-            try writer.writeByte('.');
-            try writer.writeAll(@tagName(data));
-            try writer.writeAll(" = ");
-            switch (data) {
-                inline else => |d| {
-                    try debugPrint(writer, d, depth + 1);
-                },
+            if (T == nbt.DynamicValue.UT) {
+                switch (data) {
+                    .end => try writer.writeAll("{}"),
+                    .list => |d| {
+                        if (d.len == 0) {
+                            try writer.writeAll("&.{}");
+                        } else {
+                            switch (d[0]) {
+                                inline .byte,
+                                .short,
+                                .int,
+                                .long,
+                                .float,
+                                .double,
+                                .byte_array,
+                                .int_array,
+                                .long_array,
+                                => |e, v| {
+                                    try writer.print(
+                                        "&[{}]" ++ @typeName(@TypeOf(e)) ++ "{{\n",
+                                        .{d.len},
+                                    );
+                                    for (d) |elem_| {
+                                        const elem = @field(elem_, @tagName(v));
+                                        try writer.writeByteNTimes(' ', depth * 2 + 2);
+                                        try debugPrint(writer, elem, depth + 1);
+                                        try writer.writeAll(",\n");
+                                    }
+                                    try writer.writeByteNTimes(' ', depth * 2);
+                                    try writer.print("}}", .{});
+                                },
+                                .end => try writer.writeAll("&{}"),
+                                inline .compound, .list, .string => |e| {
+                                    try debugPrint(writer, e, depth);
+                                },
+                            }
+                        }
+                    },
+                    .compound => |d| try debugPrint(writer, d, depth),
+                    inline else => |d| {
+                        try writer.writeAll("@as(" ++ @typeName(@TypeOf(d)) ++ ", ");
+                        try debugPrint(writer, d, depth + 1);
+                        try writer.writeByte(')');
+                    },
+                }
+            } else {
+                try writer.writeAll(".{\n");
+                try writer.writeByteNTimes(' ', depth * 2 + 2);
+                try writer.writeByte('.');
+                try writer.writeAll(@tagName(data));
+                try writer.writeAll(" = ");
+                switch (data) {
+                    inline else => |d| try debugPrint(writer, d, depth + 1),
+                }
+                try writer.writeAll(",\n");
+                try writer.writeByteNTimes(' ', depth * 2);
+                try writer.writeByte('}');
             }
-            //blk: inline for (d.fields) |field| {
-            //    if (@field(d.tag_type.?, field.name) == data) {
-            //        try debugPrint(writer, @field(data, field.name), depth + 1);
-            //        break :blk;
-            //    }
-            //}
-            try writer.writeAll(",\n");
-            try writer.writeByteNTimes(' ', depth * 2);
-            try writer.writeByte('}');
         },
         .Enum => try writer.print(".{s}", .{@tagName(data)}),
         .Optional => {
@@ -133,6 +162,28 @@ pub fn debugPrint(
         },
         else => @compileError("unimplemented type"),
     }
+}
+
+pub fn writeStringEscaped(writer: anytype, slice: []const u8) !void {
+    try writer.writeByte('"');
+    for (slice) |b| {
+        // TODO: handle unicode
+        switch (b) {
+            '\n' => try writer.writeAll("\n"),
+            '\t' => try writer.writeAll("\t"),
+            '\r' => try writer.writeAll("\r"),
+            '"' => try writer.writeAll("\\\""),
+            '\\' => try writer.writeAll("\\\\"),
+            else => {
+                if (std.ascii.isPrint(b)) {
+                    try writer.writeByte(b);
+                } else {
+                    try writer.print("\\0x{X:0>2}", .{b});
+                }
+            },
+        }
+    }
+    try writer.writeByte('"');
 }
 
 test {

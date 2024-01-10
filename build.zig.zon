@@ -3,13 +3,13 @@
     .version = "0.1.0",
     .paths = .{""},
     .dependencies = .{
-        .uuid6 = .{
-            .url = "https://github.com/jdknezek/uuid6-zig/archive/f849a3da0b8dc5dfc9a5740ba34f419d30909093.tar.gz",
-            .hash = "1220d16adaadf91606ff25564b176625afb15feb6c6ba2e54ab16a5ab2c17a5d3215",
+        .uuid = .{
+            .url = "https://github.com/tensorush/zig-uuid/archive/8d6fca9467d2cb2ccd375f5961cc5ad708909c2c.tar.gz",
+            .hash = "12205dc5573c8367bb42e0ce3406444b99140ca8738cef83be19c8a7ebfb28a636d9",
         },
         .@"minecraft-data" = .{
-            .url = "https://github.com/PrismarineJS/minecraft-data/archive/f851a09e3042247d42ab4f2775f986d39b45b39e.tar.gz",
-            .hash = "12200d7743546aa01f9fc54a51eb7e58f365ca999ef51399a8fea5b6e9d9bfd508e8",
+            .url = "https://github.com/PrismarineJS/minecraft-data/archive/c7bb79c174b24946d60ba0c7514c595c9e2cba67.tar.gz",
+            .hash = "12206719f567db54683a3fdd96e065bfc498fa6a5acd081e911a03c00eb18fb31493",
         },
     },
 }

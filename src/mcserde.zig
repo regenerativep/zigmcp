@@ -5,7 +5,7 @@ const Allocator = mem.Allocator;
 const assert = std.debug.assert;
 const testing = std.testing;
 
-const Uuid6 = @import("uuid6");
+const UuidMod = @import("uuid");
 
 const serde = @import("serde.zig");
 const PrefixedArray = serde.PrefixedArray;
@@ -65,6 +65,10 @@ pub fn BitSet(comptime capacity: comptime_int) type {
     };
 }
 
+// TODO: this is not how strings work in the protocol. it is apparently actually
+//     prefixed by the number of bytes, and the maximum length is actually the
+//     maximum number of utf16 code units.
+//     see https://wiki.vg/Data_types#Definitions:string
 /// String serialization type, because the protocol works with codepoint counts, not byte counts
 pub fn PString(comptime max_len_opt: ?comptime_int) type {
     return serde.Pass(
@@ -74,7 +78,7 @@ pub fn PString(comptime max_len_opt: ?comptime_int) type {
 }
 
 pub const Uuid = struct {
-    pub const UT = Uuid6;
+    pub const UT = UuidMod;
     pub const E = error{EndOfStream};
     pub fn write(writer: anytype, in: UT) !void {
         try writer.writeAll(&in.bytes);
