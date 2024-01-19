@@ -7,7 +7,7 @@ const testing = std.testing;
 
 const serde = @import("serde.zig");
 
-const BitSet = @import("mcserde.zig").BitSet(256);
+const BitSet = @import("mcserde.zig").BitSet(TOTAL_CHUNK_SECTIONS + 2);
 
 const VarI32 = @import("varint.zig").VarInt(i32);
 const nbt = @import("nbt.zig");
@@ -19,15 +19,23 @@ pub const Biome = generated.Biome;
 
 const MaxNbtDepth = @import("main.zig").MaxNbtDepth;
 
-// TODO: making this [-64,384) requires changing heightmaps impl
-//     (are heightmap values signed?)
-pub const MIN_Y = 0;
-pub const HEIGHT = 256;
+// TODO: these should not be compile-time known. dont hardcode them.
+//     https://minecraft.fandom.com/wiki/Custom#JSON_format
+//     Actual range for MIN_Y is [-2032, 2016], HEIGHT is [16, 4064]
+//     (is that mention about max build height another limit to be concerned about or
+//     is that only the combination of the MIN_Y and HEIGHT?)
+pub const MIN_Y = -64;
+pub const HEIGHT = 384;
 pub const MAX_Y = MIN_Y + HEIGHT;
 pub const TOTAL_CHUNK_SECTIONS = HEIGHT / 16;
 
 pub const BlockY = math.IntFittingRange(MIN_Y, MAX_Y);
+pub const UBlockY = math.IntFittingRange(0, HEIGHT);
 pub const BiomeY = math.IntFittingRange(MIN_Y >> 2, MAX_Y >> 2);
+
+pub inline fn blockYToU(y: BlockY, min_y: BlockY) UBlockY {
+    return @intCast(y - min_y);
+}
 
 const blockFields = @typeInfo(Block).Enum.fields;
 pub fn blockStateIdRangeForBlock(
@@ -60,9 +68,9 @@ pub fn blockIsMotionBlocking(bsid: BlockState.Id) bool {
         .water,
         .lava,
     }) |block| {
-        if (isBlock(block, bsid)) return true;
+        if (isBlock(block, bsid)) return false;
     }
-    return false;
+    return true;
 }
 pub fn isAir(bsid: BlockState.Id) bool {
     inline for (.{
@@ -314,13 +322,15 @@ pub const Column = struct {
 
     pub fn blockAt(self: Column, x: BlockAxis, z: BlockAxis, y: BlockY) BlockState.Id {
         return if (y >= MIN_Y and y < MAX_Y)
-            self.sections[y - MIN_Y >> 4].blocks.get(x, z, @truncate(y))
+            self.sections[blockYToU(y, MIN_Y) >> 4].blocks
+                .get(x, z, @truncate(blockYToU(y, MIN_Y)))
         else
             (BlockState{ .air = {} }).toId();
     }
     pub fn biomeAt(self: Column, x: BiomeAxis, z: BiomeAxis, y: BiomeY) Biome.Id {
         assert(y >= MIN_Y >> 2 and y < MAX_Y >> 2);
-        return self.sections[y - MIN_Y >> 2].blocks.get(x, z, @truncate(y));
+        return self.sections[blockYToU(y, MIN_Y) >> 2].blocks
+            .get(x, z, @truncate(blockYToU(y, MIN_Y)));
     }
     pub fn setBlock(
         self: *Column,
@@ -330,10 +340,10 @@ pub const Column = struct {
         value: BlockState.Id,
     ) void {
         assert(y >= MIN_Y and y < MAX_Y);
-        const section = &self.sections[y - MIN_Y >> 4];
-        const last_air = isAir(section.blocks.get(x, z, @truncate(y)));
+        const section = &self.sections[blockYToU(y, MIN_Y) >> 4];
+        const last_air = isAir(section.blocks.get(x, z, @truncate(blockYToU(y, MIN_Y))));
         const new_air = isAir(value);
-        section.blocks.set(x, z, @truncate(y), value);
+        section.blocks.set(x, z, @truncate(blockYToU(y, MIN_Y)), value);
 
         if (last_air and !new_air) {
             section.block_count += 1;
@@ -342,9 +352,9 @@ pub const Column = struct {
         }
 
         if (blockIsMotionBlocking(value) and self.motion_blocking.get(x, z) < y + 1)
-            self.motion_blocking.set(x, z, y + 1);
+            self.motion_blocking.set(x, z, blockYToU(y + 1, MIN_Y));
         if (blockIsWorldSurface(value) and self.world_surface.get(x, z) < y + 1)
-            self.world_surface.set(x, z, y + 1);
+            self.world_surface.set(x, z, blockYToU(y + 1, MIN_Y));
     }
     pub fn setBiome(
         self: *Column,
@@ -354,7 +364,12 @@ pub const Column = struct {
         value: Biome.Id,
     ) void {
         assert(y >= MIN_Y >> 2 and y < MAX_Y >> 2);
-        return self.sections[y - MIN_Y >> 2].biomes.set(x, z, @truncate(y), value);
+        return self.sections[blockYToU(y, MIN_Y) >> 2].biomes.set(
+            x,
+            z,
+            @truncate(blockYToU(y, MIN_Y)),
+            value,
+        );
     }
 
     // warning: this fn is slow
@@ -371,10 +386,12 @@ pub const Column = struct {
                     .motion_blocking => blockIsMotionBlocking(block),
                     .world_surface => blockIsWorldSurface(block),
                 }) {
-                    map.set(@intCast(x), @intCast(z), y);
+                    // TODO: uhh check this. is the heightmap relative to 0 or MIN_Y?
+                    //     im assuming it is MIN_Y for now
+                    map.set(@intCast(x), @intCast(z), blockYToU(y, MIN_Y));
                     break;
                 }
-                if (self.sections[y - MIN_Y >> 4].blocks == .single) {
+                if (self.sections[blockYToU(y, MIN_Y) >> 4].blocks == .single) {
                     y -= 15;
                 }
 
@@ -390,69 +407,62 @@ pub const Column = struct {
 };
 
 pub const HeightMap = struct {
-    pub const len = math.divCeil(usize, 256, @divTrunc(64, 9)) catch unreachable;
-    pub const LenSpec = serde.Constant(serde.Num(i32, .big), @intCast(len), null);
-    pub const ListSpec = serde.Array([len]u64);
+    const Self = @This();
 
-    data: ListSpec.UT = [_]u64{0} ** len,
+    // TODO: this should be runtime known. (context passing refactor necessary)
+    pub const BITS_PER_VALUE = @as(comptime_int, @typeInfo(UBlockY).Int.bits);
+
+    pub const InnerArray = PackedArray(12, 256, .left);
+    pub const ListSpec = serde.PrefixedArray(
+        serde.Num(i32, .big),
+        serde.Num(u64, .big),
+        .{ .max = 256 },
+    );
+    pub const InnerLengthSpec = ListSpec.SourceSpec;
+    pub const InnerListSpec = ListSpec.TargetSpec;
+
+    inner: InnerArray = InnerArray.init(BITS_PER_VALUE),
 
     pub const UT = @This();
     pub const E = ListSpec.E;
 
     pub fn write(writer: anytype, in: UT) !void {
-        try LenSpec.write(writer, undefined);
-        try ListSpec.write(writer, in.data);
+        try ListSpec.write(writer, in.inner.constLongSlice());
     }
     pub fn read(reader: anytype, out: *UT, _: Allocator) !void {
-        try LenSpec.read(reader, undefined, undefined);
-        try ListSpec.read(reader, &out.data, undefined);
+        var len: InnerLengthSpec.UT = undefined;
+        try InnerLengthSpec.read(reader, &len, undefined);
+        var slice_: []const InnerListSpec.ElemSpec.UT = undefined;
+        try InnerListSpec.readWithBuffer(
+            reader,
+            &slice_,
+            out.inner.data[0..len],
+            undefined,
+        );
+        out.inner.bits = BITS_PER_VALUE;
     }
     pub fn size(self: UT) usize {
-        return LenSpec.size(undefined) + ListSpec.size(self.data);
+        return ListSpec.size(self.inner.constLongSlice());
     }
     pub fn deinit(self: *UT, _: Allocator) void {
-        ListSpec.deinit(&self.data, undefined);
+        self.* = undefined;
     }
 
-    pub fn initAll(value: u9) Self {
-        var part: u64 = 0;
-        for (0..7) |_| {
-            part |= @as(u64, value);
-            part <<= 9;
-        }
-        part <<= 1;
-        var self: Self = undefined;
-        for (0..36) |i| self.data[i] = part;
-        self.data[36] = (part << (9 * 5)) >> (9 * 5);
-        return self;
+    pub fn set(self: *Self, x: BlockAxis, z: BlockAxis, value: UBlockY) void {
+        return self.inner.set(@as(u8, x) + (@as(u8, z) << 4), @intCast(value));
     }
-
-    const Self = @This();
-    pub fn set(self: *Self, x: u4, z: u4, value: u9) void {
-        return self.setIndex((@as(u8, z) << 4) + x, value);
-    }
-    pub fn get(self: Self, x: u4, z: u4) u9 {
-        return self.getIndex((@as(u8, z) << 4) + x);
-    }
-
-    const mask_ = ~(~@as(u64, 0) << 9);
-    pub fn setIndex(self: *Self, index: u8, value: u9) void {
-        const shift = 9 * @as(std.math.Log2Int(u64), @intCast(index % 7)) + 1;
-        const mask = ~(mask_ << shift);
-        const long_ind = index / 7;
-        self.data[long_ind] &= mask;
-        self.data[long_ind] |= @as(u64, value) << shift;
-    }
-    pub fn getIndex(self: Self, index: u8) u9 {
-        const shift = 9 * @as(std.math.Log2Int(u64), @intCast(index % 7)) + 1;
-        const long_ind = index / 7;
-        return @truncate(self.data[long_ind] >> shift);
+    pub fn get(self: *Self, x: BlockAxis, z: BlockAxis) UBlockY {
+        return @intCast(self.inner.get(@as(u8, x) + (@as(u8, z) << 4)));
     }
 };
 test "heightmap" {
-    var m = HeightMap.initAll(1);
-    for (0..256) |i| m.setIndex(@intCast(i), @intCast(i));
-    for (0..256) |i| try testing.expectEqual(@as(u9, @intCast(i)), m.getIndex(@intCast(i)));
+    var m = HeightMap{
+        .inner = HeightMap.InnerArray.initAll(HeightMap.BITS_PER_VALUE, 1),
+    };
+    for (0..256) |i|
+        m.inner.set(@intCast(i), @intCast(i));
+    for (0..256) |i|
+        try testing.expectEqual(@as(u9, @intCast(i)), m.inner.get(@intCast(i)));
 }
 
 pub const ChunkSection = serde.Struct(struct {
@@ -461,8 +471,15 @@ pub const ChunkSection = serde.Struct(struct {
     biomes: PalettedContainer(.biome),
 });
 
-pub fn PackedArray(comptime max_bits: comptime_int, comptime Count: comptime_int) type {
+pub fn PackedArray(
+    comptime max_bits: comptime_int,
+    comptime count: comptime_int,
+    comptime aligned: enum { left, right },
+) type {
     return struct {
+        const Self = @This();
+
+        pub const Count = count;
         pub const Index = std.math.IntFittingRange(0, Count - 1);
         pub const MaxLongCount =
             math.divCeil(usize, Count, @divTrunc(64, max_bits)) catch
@@ -480,11 +497,11 @@ pub fn PackedArray(comptime max_bits: comptime_int, comptime Count: comptime_int
                     unreachable,
             );
         }
-        pub fn longSlice(self: *@This()) []u64 {
-            return self.data[0..@This().longCount(self.bits)];
+        pub fn longSlice(self: *Self) []u64 {
+            return self.data[0..Self.longCount(self.bits)];
         }
-        pub fn constLongSlice(self: *const @This()) []const u64 {
-            return self.data[0..@This().longCount(self.bits)];
+        pub fn constLongSlice(self: *const Self) []const u64 {
+            return self.data[0..Self.longCount(self.bits)];
         }
         pub inline fn longIndex(bits: Bits, index: Index) LongIndex {
             return @intCast(@as(usize, index) / (64 / @as(usize, bits)));
@@ -492,50 +509,65 @@ pub fn PackedArray(comptime max_bits: comptime_int, comptime Count: comptime_int
         pub inline fn lowIndex(bits: Bits, index: Index) ShiftInt {
             return @intCast(@as(usize, index) % (64 / @as(usize, bits)));
         }
+        pub inline fn getShift(bits: Bits, index: Index) ShiftInt {
+            return @intCast(lowIndex(bits, index) * bits + switch (aligned) {
+                .left => @as(ShiftInt, @truncate(
+                    @as(math.Log2IntCeil(u64), 64) % bits,
+                )),
+                .right => 0,
+            });
+        }
 
         bits: Bits,
         data: [MaxLongCount]u64,
 
-        const ShiftInt = math.Log2Int(u64);
-
-        pub fn init(bits: Bits) @This() {
+        pub fn init(bits: Bits) Self {
             return .{
                 .bits = bits,
                 .data = [_]u64{0} ** MaxLongCount,
             };
         }
 
-        pub fn set(self: *@This(), index: Index, value: Value) void {
+        pub fn initAll(bits: Bits, value: Value) Self {
+            var self = Self.init(bits);
+            for (0..Count) |i| {
+                self.set(@intCast(i), value);
+            }
+            return self;
+        }
+
+        const ShiftInt = math.Log2Int(u64);
+        pub fn set(self: *Self, index: Index, value: Value) void {
             return self.setInArray(self.bits, index, value);
         }
         pub inline fn setInArray(
-            self: *@This(),
+            self: *Self,
             bits: Bits,
             index: Index,
             value: Value,
         ) void {
-            const shift: ShiftInt = @intCast(lowIndex(bits, index) * bits);
+            const shift = getShift(bits, index);
             const mask = ~(~@as(u64, 0) << @as(ShiftInt, @intCast(bits)));
             const long_index = longIndex(bits, index);
             self.data[long_index] &= ~(mask << shift);
             self.data[long_index] |= @as(u64, value) << shift;
         }
-        pub fn get(self: *const @This(), index: Index) Value {
+        pub fn get(self: *const Self, index: Index) Value {
             return self.getInArray(self.bits, index);
         }
         pub inline fn getInArray(
-            self: *const @This(),
+            self: *const Self,
             bits: Bits,
             index: Index,
         ) Value {
-            const shift: ShiftInt = @intCast(lowIndex(bits, index) * bits);
+            const shift = getShift(bits, index);
             const mask = ~(~@as(u64, 0) << @as(ShiftInt, @intCast(bits)));
             return @intCast(
                 (self.data[longIndex(bits, index)] >> shift) & mask,
             );
         }
 
-        pub fn changeBits(self: *@This(), target_bits: Bits) void {
+        pub fn changeBits(self: *Self, target_bits: Bits) void {
             assert(target_bits <= max_bits);
             if (target_bits > self.bits) {
                 var i: Index = Count - 1;
@@ -561,7 +593,7 @@ pub fn PackedArray(comptime max_bits: comptime_int, comptime Count: comptime_int
 }
 
 test "packed array" {
-    const Arr = PackedArray(16, 4096);
+    const Arr = PackedArray(16, 4096, .right);
     var arr = Arr.init(15);
     for (0..4096) |i| {
         arr.set(@intCast(i), @intCast(i));
@@ -647,9 +679,9 @@ pub fn PalettedContainer(comptime kind: enum { block, biome }) type {
         pub const IndirectPaletteLen =
             std.math.IntFittingRange(0, MaxIndirectPaletteLength);
 
-        pub const IndirectData = PackedArray(MaxIndirectBits, Count);
+        pub const IndirectData = PackedArray(MaxIndirectBits, Count, .right);
         pub const PaletteData = std.BoundedArray(Id, MaxIndirectPaletteLength);
-        pub const DirectData = PackedArray(16, Count);
+        pub const DirectData = PackedArray(16, Count, .right);
 
         single: Id,
         indirect: struct {

@@ -51,29 +51,36 @@ pub fn BitSet(comptime capacity: comptime_int) type {
             };
         }
         pub fn get(self: UT, i: usize) bool {
-            assert(i >> 6 < self.len);
-            return (self.buffer[i >> 6] & (@as(u64, 1) << @as(u6, @truncate(i)))) != 0;
+            if (i < @as(usize, self.len) << 6) {
+                return (self.buffer[i >> 6] & (@as(u64, 1) << @as(u6, @truncate(i)))) != 0;
+            } else {
+                return false;
+            }
         }
         pub fn set(self: *UT, i: usize) void {
-            assert(i >> 6 < self.len);
+            assert(i < @as(usize, self.len) << 6);
             self.buffer[i >> 6] |= @as(u64, 1) << @as(u6, @truncate(i));
         }
         pub fn unset(self: *UT, i: usize) void {
-            assert(i >> 6 < self.len);
+            assert(i < @as(usize, self.len) << 6);
             self.buffer[i >> 6] &= ~(@as(u64, 1) << @as(u6, @truncate(i)));
         }
     };
 }
 
-// TODO: this is not how strings work in the protocol. it is apparently actually
-//     prefixed by the number of bytes, and the maximum length is actually the
-//     maximum number of utf16 code units.
-//     see https://wiki.vg/Data_types#Definitions:string
-/// String serialization type, because the protocol works with codepoint counts, not byte counts
+/// String serialization type
 pub fn PString(comptime max_len_opt: ?comptime_int) type {
     return serde.Pass(
-        serde.RestrictInt(serde.Casted(VarI32, usize), .{ .max = max_len_opt }),
-        serde.CodepointArray,
+        serde.RestrictInt(
+            serde.Casted(VarI32, usize),
+            // actual max len is supposed to be number of utf16 code units, which, for
+            //     every 2 code units, we say that is a codepoint, which has a max of 4.
+            //     therefore i will say that we will treat max len as max number of
+            //     bytes divided by 2. (hopefully this works fine? TODO: look at this)
+            // TODO: actually measure code units?
+            .{ .max = if (max_len_opt) |l| l * 2 else null },
+        ),
+        serde.DynamicArray(u8),
     );
 }
 

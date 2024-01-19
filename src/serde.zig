@@ -435,6 +435,39 @@ pub fn Array(comptime T: type) type {
     };
 }
 
+pub fn BoundedDynamicArray(comptime T: type, comptime capacity: comptime_int) type {
+    return struct {
+        pub const InnerArray = DynamicArray(T);
+        pub const UT = std.BoundedArray(InnerArray.ElemSpec.UT, capacity);
+        pub const E = InnerArray.E || error{InvalidInt};
+        pub const V = Length;
+
+        pub const Length = std.math.IntFittingRange(0, capacity);
+
+        pub fn getValue(in: UT) V {
+            return in.len;
+        }
+        pub fn write(writer: anytype, in: UT) !void {
+            try InnerArray.write(writer, in.constSlice());
+        }
+        pub fn read(reader: anytype, out: *UT, a: Allocator, len: V) !void {
+            if (len > capacity) return error.InvalidInt;
+            out.len = len;
+            var slice_: []const InnerArray.ElemSpec.UT = undefined;
+            try InnerArray.readWithBuffer(reader, &slice_, out.buffer[0..len], a);
+        }
+        pub fn deinit(self: *UT, a: Allocator) void {
+            var slice = self.slice();
+            InnerArray.deinit(&slice, a);
+        }
+        pub fn size(self: UT) usize {
+            var total: usize = 0;
+            for (self.constSlice()) |d| total += InnerArray.ElemSpec.size(d);
+            return total;
+        }
+    };
+}
+
 pub fn DynamicArray(comptime T: type) type {
     return struct {
         pub const ElemSpec = Spec(T);
