@@ -331,7 +331,7 @@ pub const Column = struct {
             self.sections[blockYToU(y, MIN_Y) >> 4].blocks
                 .get(x, z, @truncate(blockYToU(y, MIN_Y)))
         else
-            comptime BlockState.air.toId();
+            comptime BlockState.toId(.air);
     }
     pub fn biomeAt(self: Column, x: BiomeAxis, z: BiomeAxis, y: BiomeY) Biome.Id {
         return if (y >= MIN_BIOME_Y >> 2 and y < MAX_BIOME_Y >> 2)

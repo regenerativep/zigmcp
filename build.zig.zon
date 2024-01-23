@@ -4,11 +4,11 @@
     .paths = .{""},
     .dependencies = .{
         .uuid = .{
-            .url = "https://github.com/tensorush/zig-uuid/archive/8d6fca9467d2cb2ccd375f5961cc5ad708909c2c.tar.gz",
+            .url = "git+https://github.com/tensorush/zig-uuid.git#8d6fca9467d2cb2ccd375f5961cc5ad708909c2c",
             .hash = "12205dc5573c8367bb42e0ce3406444b99140ca8738cef83be19c8a7ebfb28a636d9",
         },
         .@"minecraft-data" = .{
-            .url = "https://github.com/PrismarineJS/minecraft-data/archive/c7bb79c174b24946d60ba0c7514c595c9e2cba67.tar.gz",
+            .url = "git+https://github.com/PrismarineJS/minecraft-data.git#c7bb79c174b24946d60ba0c7514c595c9e2cba67",
             .hash = "12206719f567db54683a3fdd96e065bfc498fa6a5acd081e911a03c00eb18fb31493",
         },
     },
