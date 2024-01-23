@@ -29,11 +29,18 @@ pub const HEIGHT = 384;
 pub const MAX_Y = MIN_Y + HEIGHT;
 pub const TOTAL_CHUNK_SECTIONS = HEIGHT / 16;
 
+pub const MIN_BIOME_Y = MIN_Y >> 2;
+pub const MAX_BIOME_Y = MAX_Y >> 2;
+
 pub const BlockY = math.IntFittingRange(MIN_Y, MAX_Y);
 pub const UBlockY = math.IntFittingRange(0, HEIGHT);
-pub const BiomeY = math.IntFittingRange(MIN_Y >> 2, MAX_Y >> 2);
+pub const BiomeY = math.IntFittingRange(MIN_BIOME_Y, MAX_BIOME_Y);
+pub const UBiomeY = math.IntFittingRange(0, MAX_BIOME_Y - MIN_BIOME_Y);
 
 pub inline fn blockYToU(y: BlockY, min_y: BlockY) UBlockY {
+    return @intCast(y - min_y);
+}
+pub inline fn biomeYToU(y: BiomeY, min_y: BiomeY) UBiomeY {
     return @intCast(y - min_y);
 }
 
@@ -287,8 +294,7 @@ pub const Column = struct {
     sections: [TOTAL_CHUNK_SECTIONS]ChunkSection.UT = [_]ChunkSection.UT{.{
         .block_count = 0,
         .blocks = .{ .single = Block.air.defaultStateId() },
-        //.biomes = .{ .single = @intFromEnum(Biome.plains) },
-        .biomes = .{ .single = 0 },
+        .biomes = .{ .single = @intFromEnum(Biome.plains) },
     }} ** TOTAL_CHUNK_SECTIONS,
     block_entities: std.AutoHashMapUnmanaged(
         struct { x: BlockAxis, z: BlockAxis, y: BlockY },
@@ -325,12 +331,14 @@ pub const Column = struct {
             self.sections[blockYToU(y, MIN_Y) >> 4].blocks
                 .get(x, z, @truncate(blockYToU(y, MIN_Y)))
         else
-            (BlockState{ .air = {} }).toId();
+            comptime BlockState.air.toId();
     }
     pub fn biomeAt(self: Column, x: BiomeAxis, z: BiomeAxis, y: BiomeY) Biome.Id {
-        assert(y >= MIN_Y >> 2 and y < MAX_Y >> 2);
-        return self.sections[blockYToU(y, MIN_Y) >> 2].blocks
-            .get(x, z, @truncate(blockYToU(y, MIN_Y)));
+        return if (y >= MIN_BIOME_Y >> 2 and y < MAX_BIOME_Y >> 2)
+            self.sections[biomeYToU(y, MIN_BIOME_Y) >> 2].blocks
+                .get(x, z, @truncate(biomeYToU(y, MIN_BIOME_Y)))
+        else
+            @intFromEnum(Biome.the_void);
     }
     pub fn setBlock(
         self: *Column,
@@ -339,12 +347,14 @@ pub const Column = struct {
         y: BlockY,
         value: BlockState.Id,
     ) void {
-        assert(y >= MIN_Y and y < MAX_Y);
+        if (y < MIN_Y or y >= MAX_Y) return;
         const section = &self.sections[blockYToU(y, MIN_Y) >> 4];
         const last_air = isAir(section.blocks.get(x, z, @truncate(blockYToU(y, MIN_Y))));
         const new_air = isAir(value);
         section.blocks.set(x, z, @truncate(blockYToU(y, MIN_Y)), value);
 
+        // update heightmap while we're at it; this is a lot faster than generating
+        //     through `createHeightMap` (at least if flat)
         if (last_air and !new_air) {
             section.block_count += 1;
         } else if (!last_air and new_air) {
@@ -363,13 +373,9 @@ pub const Column = struct {
         y: BiomeY,
         value: Biome.Id,
     ) void {
-        assert(y >= MIN_Y >> 2 and y < MAX_Y >> 2);
-        return self.sections[blockYToU(y, MIN_Y) >> 2].biomes.set(
-            x,
-            z,
-            @truncate(blockYToU(y, MIN_Y)),
-            value,
-        );
+        if (y < MIN_BIOME_Y >> 2 and y >= MAX_BIOME_Y >> 2) return;
+        self.sections[biomeYToU(y, MIN_BIOME_Y) >> 2].biomes
+            .set(x, z, @truncate(biomeYToU(y, MIN_BIOME_Y)), value);
     }
 
     // warning: this fn is slow

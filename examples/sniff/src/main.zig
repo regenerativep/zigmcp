@@ -3,6 +3,8 @@ const io = std.io;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const net = std.net;
+const time = std.time;
+const fmt = std.fmt;
 
 const mcp = @import("mcp");
 const mcio = mcp.packetio;
@@ -10,6 +12,7 @@ const mcv = mcp.vlatest;
 
 pub const Options = struct {
     show_packet_contents: bool = false,
+    start_time: i128 = 0,
 };
 
 pub fn main() !void {
@@ -35,10 +38,11 @@ pub fn main() !void {
 
     while (true) {
         const conn = server.accept() catch |e| {
-            std.log.err("Failed to accept connection: {any}", .{e});
+            std.log.err("Connection failure: {any}", .{e});
             continue;
         };
-        print("receiving connection from {}\n", .{conn.address});
+        print("Connection from {}\n", .{conn.address});
+        options.start_time = time.nanoTimestamp();
         handleServerbound(gpa.allocator(), conn, options) catch |e| {
             if (e != error.EndOfStream) {
                 std.log.err("Error handling client from {}, {any}", .{ conn.address, e });
@@ -53,10 +57,10 @@ pub fn main() !void {
 var stdout_mutex = std.Thread.Mutex{};
 var stdout_b = io.bufferedWriter(io.getStdOut().writer());
 var stdout = stdout_b.writer();
-fn print(comptime fmt: [:0]const u8, args: anytype) void {
+fn print(comptime fmt_: [:0]const u8, args: anytype) void {
     stdout_mutex.lock();
     defer stdout_mutex.unlock();
-    stdout.print(fmt, args) catch {};
+    stdout.print(fmt_, args) catch {};
     stdout_b.flush() catch {};
 }
 
@@ -153,10 +157,14 @@ pub fn handleServerbound(
 
                 stdout_mutex.lock();
                 defer stdout_mutex.unlock();
-                try stdout.print(
-                    "c->s:{s}:0x{X}:({}): ",
-                    .{ @tagName(v), frame.id, frame.data.len },
-                );
+                try stdout.print("{} c->s:{s}:0x{X}:({}): ", .{
+                    fmt.fmtDurationSigned(@intCast(
+                        time.nanoTimestamp() - options.start_time,
+                    )),
+                    @tagName(v),
+                    frame.id,
+                    frame.data.len,
+                });
                 if (!options.show_packet_contents and id != null) {
                     try stdout.print("{s} ", .{@tagName(id.?)});
                 }
@@ -268,10 +276,14 @@ pub fn handleClientbound(
 
                 stdout_mutex.lock();
                 defer stdout_mutex.unlock();
-                try stdout.print(
-                    "c<-s:{s}:0x{X}:({}): ",
-                    .{ @tagName(v), frame.id, frame.data.len },
-                );
+                try stdout.print("{} c<-s:{s}:0x{X}:({}): ", .{
+                    fmt.fmtDurationSigned(@intCast(
+                        time.nanoTimestamp() - options.start_time,
+                    )),
+                    @tagName(v),
+                    frame.id,
+                    frame.data.len,
+                });
                 if (!options.show_packet_contents and id != null) {
                     try stdout.print("{s} ", .{@tagName(id.?)});
                 }
