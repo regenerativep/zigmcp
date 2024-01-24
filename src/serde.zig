@@ -21,16 +21,16 @@ pub fn Num(comptime T: type, comptime endian: std.builtin.Endian) type {
         pub const UT = T;
         pub const E = error{EndOfStream};
 
-        pub fn write(writer: anytype, in: T) !void {
+        pub fn write(writer: anytype, in: T, _: anytype) !void {
             try writer.writeInt(U, @bitCast(in), endian);
         }
-        pub fn read(reader: anytype, out: *T, _: Allocator) !void {
+        pub fn read(reader: anytype, out: *T, _: anytype) !void {
             out.* = @bitCast(try reader.readInt(U, endian));
         }
-        pub fn deinit(self: *T, _: Allocator) void {
+        pub fn deinit(self: *T, _: anytype) void {
             self.* = undefined;
         }
-        pub fn size(_: T) usize {
+        pub fn size(_: T, _: anytype) usize {
             return @sizeOf(T);
         }
     };
@@ -39,16 +39,16 @@ pub fn Num(comptime T: type, comptime endian: std.builtin.Endian) type {
 pub const Bool = struct {
     pub const UT = bool;
     pub const E = error{EndOfStream};
-    pub fn write(writer: anytype, in: bool) !void {
+    pub fn write(writer: anytype, in: bool, _: anytype) !void {
         try writer.writeByte(@intFromBool(in));
     }
-    pub fn read(reader: anytype, out: *bool, _: Allocator) !void {
+    pub fn read(reader: anytype, out: *bool, _: anytype) !void {
         out.* = (try reader.readByte()) != 0;
     }
-    pub fn deinit(self: *bool, _: Allocator) void {
+    pub fn deinit(self: *bool, _: anytype) void {
         self.* = undefined;
     }
-    pub fn size(_: bool) usize {
+    pub fn size(_: bool, _: anytype) usize {
         return 1;
     }
 };
@@ -56,10 +56,10 @@ pub const Bool = struct {
 pub const Void = struct {
     pub const UT = void;
     pub const E = error{};
-    pub fn write(_: anytype, _: void) !void {}
-    pub fn read(_: anytype, _: *void, _: Allocator) !void {}
-    pub fn deinit(_: *void, _: Allocator) void {}
-    pub fn size(_: void) usize {
+    pub fn write(_: anytype, _: void, _: anytype) !void {}
+    pub fn read(_: anytype, _: *void, _: anytype) !void {}
+    pub fn deinit(_: *void, _: anytype) void {}
+    pub fn size(_: void, _: anytype) usize {
         return 0;
     }
 };
@@ -158,35 +158,35 @@ pub fn Struct(comptime T: type) type {
         pub const UT = StructUT(T, &specs);
         pub const E = SpecsError(&specs);
 
-        pub fn write(writer: anytype, in: UT) !void {
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
             inline for (info.fields, 0..) |field, i| {
-                try specs[i].write(writer, @field(in, field.name));
+                try specs[i].write(writer, @field(in, field.name), ctx);
             }
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
             inline for (info.fields, 0..) |field, i| {
                 errdefer {
                     comptime var j = i;
                     inline while (j > 0) {
                         j -= 1;
-                        specs[j].deinit(&@field(out, info.fields[j].name), a);
+                        specs[j].deinit(&@field(out, info.fields[j].name), ctx);
                     }
                 }
-                try specs[i].read(reader, &@field(out, field.name), a);
+                try specs[i].read(reader, &@field(out, field.name), ctx);
             }
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
+        pub fn deinit(self: *UT, ctx: anytype) void {
             comptime var i = info.fields.len;
             inline while (i > 0) {
                 i -= 1;
-                specs[i].deinit(&@field(self, info.fields[i].name), a);
+                specs[i].deinit(&@field(self, info.fields[i].name), ctx);
             }
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
+        pub fn size(self: UT, ctx: anytype) usize {
             var total: usize = 0;
             inline for (info.fields, 0..) |field, i| {
-                total += specs[i].size(@field(self, field.name));
+                total += specs[i].size(@field(self, field.name), ctx);
             }
             return total;
         }
@@ -204,20 +204,20 @@ pub fn Enum(comptime I: type, comptime T: type) type {
             return @intCast(@intFromEnum(self));
         }
 
-        pub fn write(writer: anytype, in: T) !void {
-            try TagSpec.write(writer, getInt(in));
+        pub fn write(writer: anytype, in: T, ctx: anytype) !void {
+            try TagSpec.write(writer, getInt(in), ctx);
         }
-        pub fn read(reader: anytype, out: *T, a: Allocator) !void {
+        pub fn read(reader: anytype, out: *T, ctx: anytype) !void {
             var n: TagSpec.UT = undefined;
-            try TagSpec.read(reader, &n, a);
-            defer TagSpec.deinit(&n, a);
+            try TagSpec.read(reader, &n, ctx);
+            defer TagSpec.deinit(&n, ctx);
             out.* = try std.meta.intToEnum(UT, @as(EnumI, @intCast(n)));
         }
-        pub fn deinit(self: *T, _: Allocator) void {
+        pub fn deinit(self: *T, _: anytype) void {
             self.* = undefined;
         }
-        pub fn size(self: T) usize {
-            return TagSpec.size(getInt(self));
+        pub fn size(self: T, ctx: anytype) usize {
+            return TagSpec.size(getInt(self), ctx);
         }
     };
 }
@@ -243,36 +243,36 @@ pub fn Union(comptime T: type) type {
             };
         }
 
-        pub fn write(writer: anytype, in: UT) !void {
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
             switch (in) {
                 inline else => |d, v| {
-                    try specs[comptime tagI(v)].write(writer, d);
+                    try specs[comptime tagI(v)].write(writer, d, ctx);
                 },
             }
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator, tag: EnumT) !void {
+        pub fn read(reader: anytype, out: *UT, ctx: anytype, tag: EnumT) !void {
             switch (tag) {
                 inline else => |v| {
                     out.* = @unionInit(UT, @tagName(v), undefined);
                     try specs[comptime tagI(v)].read(
                         reader,
                         &@field(out, @tagName(v)),
-                        a,
+                        ctx,
                     );
                 },
             }
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
+        pub fn deinit(self: *UT, ctx: anytype) void {
             switch (self.*) {
                 inline else => |*d, v| {
-                    specs[comptime tagI(v)].deinit(d, a);
+                    specs[comptime tagI(v)].deinit(d, ctx);
                 },
             }
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
+        pub fn size(self: UT, ctx: anytype) usize {
             return switch (self) {
-                inline else => |d, v| specs[comptime tagI(v)].size(d),
+                inline else => |d, v| specs[comptime tagI(v)].size(d, ctx),
             };
         }
     };
@@ -291,37 +291,37 @@ pub fn OptionalUnion(comptime T: type, comptime OtherT: type) type {
         };
         pub const E = OptSpec.E || OtherSpec.E;
 
-        pub fn write(writer: anytype, in: UT) !void {
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
             switch (in) {
-                .some => |v| try OptSpec.write(writer, v),
+                .some => |v| try OptSpec.write(writer, v, ctx),
                 .other => |v| {
-                    try OptSpec.write(writer, null);
-                    try OtherSpec.write(writer, v);
+                    try OptSpec.write(writer, null, ctx);
+                    try OtherSpec.write(writer, v, ctx);
                 },
             }
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
             var opt_val: OptSpec.UT = undefined;
-            try OptSpec.read(reader, &opt_val, a);
-            errdefer OptSpec.deinit(&opt_val, a);
+            try OptSpec.read(reader, &opt_val, ctx);
+            errdefer OptSpec.deinit(&opt_val, ctx);
             if (opt_val) |v| {
                 out.* = .{ .some = v };
             } else {
                 out.* = .{ .other = undefined };
-                try OtherSpec.read(reader, &out.other, a);
+                try OtherSpec.read(reader, &out.other, ctx);
             }
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
+        pub fn deinit(self: *UT, ctx: anytype) void {
             switch (self.*) {
-                .some => |*v| OptSpec.InnerSpec.deinit(v, a),
-                .other => |*v| OtherSpec.deinit(v, a),
+                .some => |*v| OptSpec.InnerSpec.deinit(v, ctx),
+                .other => |*v| OtherSpec.deinit(v, ctx),
             }
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
+        pub fn size(self: UT, ctx: anytype) usize {
             return switch (self) {
-                .some => |v| OptSpec.size(v),
-                .other => |v| OptSpec.size(null) + OtherSpec.size(v),
+                .some => |v| OptSpec.size(v, ctx),
+                .other => |v| OptSpec.size(null, ctx) + OtherSpec.size(v, ctx),
             };
         }
     };
@@ -334,22 +334,23 @@ pub fn Pass(comptime I: type, comptime T: type) type {
         pub const UT = TargetSpec.UT;
         pub const E = SourceSpec.E || TargetSpec.E;
 
-        pub fn write(writer: anytype, in: UT) !void {
-            try SourceSpec.write(writer, TargetSpec.getValue(in));
-            try TargetSpec.write(writer, in);
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+            try SourceSpec.write(writer, TargetSpec.getValue(in), ctx);
+            try TargetSpec.write(writer, in, ctx);
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
             var value: SourceSpec.UT = undefined;
-            try SourceSpec.read(reader, &value, a);
-            defer SourceSpec.deinit(&value, a);
-            try TargetSpec.read(reader, out, a, value);
+            try SourceSpec.read(reader, &value, ctx);
+            defer SourceSpec.deinit(&value, ctx);
+            try TargetSpec.read(reader, out, ctx, value);
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
-            TargetSpec.deinit(self, a);
+        pub fn deinit(self: *UT, ctx: anytype) void {
+            TargetSpec.deinit(self, ctx);
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
-            return SourceSpec.size(TargetSpec.getValue(self)) + TargetSpec.size(self);
+        pub fn size(self: UT, ctx: anytype) usize {
+            return SourceSpec.size(TargetSpec.getValue(self), ctx) +
+                TargetSpec.size(self, ctx);
         }
     };
 }
@@ -368,22 +369,22 @@ pub fn Pair(comptime M: type, comptime T: type) type {
         pub fn getValue(in: UT) V {
             return TargetSpec.getValue(in.t);
         }
-        pub fn write(writer: anytype, in: UT) !void {
-            try MiddleSpec.write(writer, in.m);
-            try TargetSpec.write(writer, in.t);
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+            try MiddleSpec.write(writer, in.m, ctx);
+            try TargetSpec.write(writer, in.t, ctx);
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator, value: anytype) !void {
-            try MiddleSpec.read(reader, &out.m, a);
-            errdefer MiddleSpec.deinit(&out.m, a);
-            try TargetSpec.read(reader, &out.t, a, value);
+        pub fn read(reader: anytype, out: *UT, ctx: anytype, value: anytype) !void {
+            try MiddleSpec.read(reader, &out.m, ctx);
+            errdefer MiddleSpec.deinit(&out.m, ctx);
+            try TargetSpec.read(reader, &out.t, ctx, value);
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
-            TargetSpec.deinit(&self.t, a);
-            MiddleSpec.deinit(&self.m, a);
+        pub fn deinit(self: *UT, ctx: anytype) void {
+            TargetSpec.deinit(&self.t, ctx);
+            MiddleSpec.deinit(&self.m, ctx);
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
-            return MiddleSpec.size(self.m) + TargetSpec.size(self.t);
+        pub fn size(self: UT, ctx: anytype) usize {
+            return MiddleSpec.size(self.m, ctx) + TargetSpec.size(self.t, ctx);
         }
     };
 }
@@ -400,10 +401,10 @@ pub fn Array(comptime T: type) type {
         pub const UT = [info.len]ElemSpec.UT;
         pub const E = ElemSpec.E;
 
-        pub fn write(writer: anytype, in: UT) !void {
-            for (&in) |d| try ElemSpec.write(writer, d);
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+            for (&in) |d| try ElemSpec.write(writer, d, ctx);
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
             if (ElemSpec.UT == u8) {
                 try reader.readNoEof(&out.*);
             } else {
@@ -412,24 +413,24 @@ pub fn Array(comptime T: type) type {
                         var j = i;
                         while (j > 0) {
                             j -= 1;
-                            ElemSpec.deinit(&out.*[j], a);
+                            ElemSpec.deinit(&out.*[j], ctx);
                         }
                     }
-                    try ElemSpec.read(reader, d, a);
+                    try ElemSpec.read(reader, d, ctx);
                 }
             }
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
+        pub fn deinit(self: *UT, ctx: anytype) void {
             var i: usize = info.len;
             while (i > 0) {
                 i -= 1;
-                ElemSpec.deinit(&self.*[i], a);
+                ElemSpec.deinit(&self.*[i], ctx);
             }
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
+        pub fn size(self: UT, ctx: anytype) usize {
             var total: usize = 0;
-            for (&self) |d| total += ElemSpec.size(d);
+            for (&self) |d| total += ElemSpec.size(d, ctx);
             return total;
         }
     };
@@ -447,22 +448,22 @@ pub fn BoundedDynamicArray(comptime T: type, comptime capacity: comptime_int) ty
         pub fn getValue(in: UT) V {
             return in.len;
         }
-        pub fn write(writer: anytype, in: UT) !void {
-            try InnerArray.write(writer, in.constSlice());
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+            try InnerArray.write(writer, in.constSlice(), ctx);
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator, len: V) !void {
+        pub fn read(reader: anytype, out: *UT, ctx: anytype, len: V) !void {
             if (len > capacity) return error.InvalidInt;
             out.len = len;
             var slice_: []const InnerArray.ElemSpec.UT = undefined;
-            try InnerArray.readWithBuffer(reader, &slice_, out.buffer[0..len], a);
+            try InnerArray.readWithBuffer(reader, &slice_, out.buffer[0..len], ctx);
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
+        pub fn deinit(self: *UT, ctx: anytype) void {
             var slice = self.slice();
-            InnerArray.deinit(&slice, a);
+            InnerArray.deinit(&slice, ctx);
         }
-        pub fn size(self: UT) usize {
+        pub fn size(self: UT, ctx: anytype) usize {
             var total: usize = 0;
-            for (self.constSlice()) |d| total += InnerArray.ElemSpec.size(d);
+            for (self.constSlice()) |d| total += InnerArray.ElemSpec.size(d, ctx);
             return total;
         }
     };
@@ -478,23 +479,23 @@ pub fn DynamicArray(comptime T: type) type {
         pub fn getValue(in: UT) V {
             return in.len;
         }
-        pub fn write(writer: anytype, in: UT) !void {
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
             if (ElemSpec.UT == u8) {
                 try writer.writeAll(in);
             } else {
-                for (in) |d| try ElemSpec.write(writer, d);
+                for (in) |d| try ElemSpec.write(writer, d, ctx);
             }
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator, len: V) !void {
-            const arr = try a.alloc(ElemSpec.UT, len);
-            errdefer a.free(arr);
-            try readWithBuffer(reader, out, arr, a);
+        pub fn read(reader: anytype, out: *UT, ctx: anytype, len: V) !void {
+            const arr = try ctx.allocator.alloc(ElemSpec.UT, len);
+            errdefer ctx.allocator.free(arr);
+            try readWithBuffer(reader, out, arr, ctx);
         }
         pub fn readWithBuffer(
             reader: anytype,
             out: *UT,
             buf: []ElemSpec.UT,
-            a: Allocator,
+            ctx: anytype,
         ) !void {
             if (ElemSpec.UT == u8) {
                 try reader.readNoEof(buf);
@@ -504,26 +505,26 @@ pub fn DynamicArray(comptime T: type) type {
                         var j = i;
                         while (j > 0) {
                             j -= 1;
-                            ElemSpec.deinit(&buf[j], a);
+                            ElemSpec.deinit(&buf[j], ctx);
                         }
                     }
-                    try ElemSpec.read(reader, d, a);
+                    try ElemSpec.read(reader, d, ctx);
                 }
             }
             out.* = buf;
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
+        pub fn deinit(self: *UT, ctx: anytype) void {
             var i = self.len;
             while (i > 0) {
                 i -= 1;
-                ElemSpec.deinit(@constCast(&self.*[i]), a);
+                ElemSpec.deinit(@constCast(&self.*[i]), ctx);
             }
-            a.free(self.*);
+            ctx.allocator.free(self.*);
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
+        pub fn size(self: UT, ctx: anytype) usize {
             var total: usize = 0;
-            for (self) |d| total += ElemSpec.size(d);
+            for (self) |d| total += ElemSpec.size(d, ctx);
             return total;
         }
     };
@@ -541,12 +542,12 @@ pub const CodepointArray = struct {
     pub fn getValue(self: UT) V {
         return std.unicode.utf8CountCodepoints(self) catch unreachable;
     }
-    pub fn write(writer: anytype, in: UT) !void {
+    pub fn write(writer: anytype, in: UT, _: anytype) !void {
         try writer.writeAll(in);
     }
 
-    pub fn read(reader: anytype, out: *UT, a: Allocator, len: V) !void {
-        var data = try std.ArrayList(u8).initCapacity(a, len);
+    pub fn read(reader: anytype, out: *UT, ctx: anytype, len: V) !void {
+        var data = try std.ArrayList(u8).initCapacity(ctx.allocator, len);
         defer data.deinit();
         var i: u32 = 0;
         while (i < len) : (i += 1) {
@@ -562,11 +563,11 @@ pub const CodepointArray = struct {
         }
         out.* = try data.toOwnedSlice();
     }
-    pub fn deinit(self: *UT, alloc: Allocator) void {
-        alloc.free(self.*);
+    pub fn deinit(self: *UT, ctx: anytype) void {
+        ctx.allocator.free(self.*);
         self.* = undefined;
     }
-    pub fn size(self: UT) usize {
+    pub fn size(self: UT, _: anytype) usize {
         return self.len;
     }
 };
@@ -581,12 +582,12 @@ pub fn RestrictInt(comptime T: type, comptime opts: RestrictIntOptions) type {
         pub const UT = InnerSpec.UT;
         pub const E = InnerSpec.E || error{InvalidInt};
 
-        pub fn write(writer: anytype, in: UT) !void {
-            try InnerSpec.write(writer, in);
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+            try InnerSpec.write(writer, in, ctx);
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
-            try InnerSpec.read(reader, out, a);
-            errdefer InnerSpec.deinit(out, a);
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
+            try InnerSpec.read(reader, out, ctx);
+            errdefer InnerSpec.deinit(out, ctx);
             if (opts.max) |max| {
                 if (out.* > max) return error.InvalidInt;
             }
@@ -594,11 +595,11 @@ pub fn RestrictInt(comptime T: type, comptime opts: RestrictIntOptions) type {
                 if (out.* < min) return error.InvalidInt;
             }
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
-            InnerSpec.deinit(self, a);
+        pub fn deinit(self: *UT, ctx: anytype) void {
+            InnerSpec.deinit(self, ctx);
         }
-        pub fn size(self: UT) usize {
-            return InnerSpec.size(self);
+        pub fn size(self: UT, ctx: anytype) usize {
+            return InnerSpec.size(self, ctx);
         }
     };
 }
@@ -617,29 +618,29 @@ pub fn Optional(comptime T: type) type {
         pub const UT = ?InnerSpec.UT;
         pub const E = InnerSpec.E;
 
-        pub fn write(writer: anytype, in: UT) !void {
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
             if (in) |d| {
                 try writer.writeByte(0x01);
-                try InnerSpec.write(writer, d);
+                try InnerSpec.write(writer, d, ctx);
             } else {
                 try writer.writeByte(0x00);
             }
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
             const has_data = (try reader.readByte()) != 0;
             if (has_data) {
                 out.* = @as(InnerSpec.UT, undefined);
-                try InnerSpec.read(reader, &(out.*.?), a);
+                try InnerSpec.read(reader, &(out.*.?), ctx);
             } else {
                 out.* = null;
             }
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
-            if (self.*) |*inner| InnerSpec.deinit(inner, a);
+        pub fn deinit(self: *UT, ctx: anytype) void {
+            if (self.*) |*inner| InnerSpec.deinit(inner, ctx);
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
-            return 1 + if (self) |inner| InnerSpec.size(inner) else 0;
+        pub fn size(self: UT, ctx: anytype) usize {
+            return 1 + if (self) |inner| InnerSpec.size(inner, ctx) else 0;
         }
     };
 }
@@ -653,36 +654,37 @@ pub fn Remaining(comptime T: type, comptime opts: struct {
         pub const UT = []const ElemSpec.UT;
         pub const E = ElemSpec.E || error{EndOfStream};
 
-        pub fn write(writer: anytype, in: UT) !void {
-            for (in) |d| try ElemSpec.write(writer, d);
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+            for (in) |d| try ElemSpec.write(writer, d, ctx);
         }
-        pub fn read(reader_: anytype, out: *UT, a: Allocator) !void {
+        pub fn read(reader_: anytype, out: *UT, ctx: anytype) !void {
             var lr = std.io.limitedReader(
                 reader_,
                 if (opts.max) |max| max else std.math.maxInt(u64),
             );
             const reader = lr.reader();
             var arr = if (opts.est_size) |est_size|
-                try std.ArrayListUnmanaged(ElemSpec.UT).initCapacity(a, est_size)
+                try std.ArrayListUnmanaged(ElemSpec.UT)
+                    .initCapacity(ctx.allocator, est_size)
             else
                 std.ArrayListUnmanaged(ElemSpec.UT){};
-            defer arr.deinit(a);
+            defer arr.deinit(ctx.allocator);
             if (ElemSpec.UT == u8) {
                 var fifo = std.fifo.LinearFifo(u8, .{ .Static = 512 }).init();
-                try fifo.pump(reader, arr.writer(a));
+                try fifo.pump(reader, arr.writer(ctx.allocator));
             } else {
                 while (true) {
                     errdefer {
                         var i = arr.items.len;
                         while (i > 0) {
                             i -= 1;
-                            ElemSpec.deinit(&arr.items[i], a);
+                            ElemSpec.deinit(&arr.items[i], ctx);
                         }
                     }
-                    const d = try arr.addOne(a);
+                    const d = try arr.addOne(ctx.allocator);
                     const last_count = lr.bytes_left;
                     // should not read anything if there is nothing left
-                    ElemSpec.read(reader, d, a) catch |e| {
+                    ElemSpec.read(reader, d, ctx) catch |e| {
                         arr.items.len -= 1;
                         if (e == error.EndOfStream and last_count == lr.bytes_left)
                             break;
@@ -690,20 +692,20 @@ pub fn Remaining(comptime T: type, comptime opts: struct {
                     };
                 }
             }
-            out.* = try arr.toOwnedSlice(a);
+            out.* = try arr.toOwnedSlice(ctx.allocator);
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
+        pub fn deinit(self: *UT, ctx: anytype) void {
             var i = self.len;
             while (i > 0) {
                 i -= 1;
-                ElemSpec.deinit(@constCast(&self.*[i]), a);
+                ElemSpec.deinit(@constCast(&self.*[i]), ctx);
             }
-            a.free(self.*);
+            ctx.allocator.free(self.*);
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
+        pub fn size(self: UT, ctx: anytype) usize {
             var total: usize = 0;
-            for (self) |d| total += ElemSpec.size(d);
+            for (self) |d| total += ElemSpec.size(d, ctx);
             return total;
         }
     };
@@ -718,30 +720,30 @@ pub fn ByteLimited(comptime I: type, comptime T: type, comptime opts: struct {
         pub const UT = ListSpec.UT;
         pub const E = ListSpec.E || LenSpec.E || error{ InvalidLength, EndOfStream };
 
-        pub fn write(writer: anytype, in: UT) !void {
-            try LenSpec.write(writer, @intCast(ListSpec.size(in)));
-            try ListSpec.write(writer, in);
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+            try LenSpec.write(writer, @intCast(ListSpec.size(in, ctx)), ctx);
+            try ListSpec.write(writer, in, ctx);
         }
-        pub fn read(reader_: anytype, out: *UT, a: Allocator) !void {
+        pub fn read(reader_: anytype, out: *UT, ctx: anytype) !void {
             var len_: LenSpec.UT = undefined;
-            try LenSpec.read(reader_, &len_, a);
-            defer LenSpec.deinit(&len_, a);
+            try LenSpec.read(reader_, &len_, ctx);
+            defer LenSpec.deinit(&len_, ctx);
             const len: usize = std.math.cast(usize, len_) orelse
                 return error.InvalidLength;
             if (opts.max) |max_length| {
                 if (len > max_length) return error.InvalidLength;
             }
             var lr = std.io.limitedReader(reader_, len);
-            try ListSpec.read(lr.reader(), out, a);
-            errdefer ListSpec.deinit(out, a);
+            try ListSpec.read(lr.reader(), out, ctx);
+            errdefer ListSpec.deinit(out, ctx);
             try lr.reader().skipBytes(lr.bytes_left, .{});
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
-            ListSpec.deinit(self, a);
+        pub fn deinit(self: *UT, ctx: anytype) void {
+            ListSpec.deinit(self, ctx);
         }
-        pub fn size(self: UT) usize {
-            const payload_byte_len = ListSpec.size(self);
-            return LenSpec.size(@intCast(payload_byte_len)) + payload_byte_len;
+        pub fn size(self: UT, ctx: anytype) usize {
+            const payload_byte_len = ListSpec.size(self, ctx);
+            return LenSpec.size(@intCast(payload_byte_len), ctx) + payload_byte_len;
         }
     };
 }
@@ -781,16 +783,16 @@ pub fn Packed(comptime T: type, comptime endian: std.builtin.Endian) type {
         pub const UT = T;
         pub const E = error{EndOfStream};
 
-        pub fn write(writer: anytype, in: UT) !void {
+        pub fn write(writer: anytype, in: UT, _: anytype) !void {
             try writer.writeInt(Backing, @bitCast(in), endian);
         }
-        pub fn read(reader: anytype, out: *UT, _: Allocator) !void {
+        pub fn read(reader: anytype, out: *UT, _: anytype) !void {
             out.* = @bitCast(try reader.readInt(Backing, endian));
         }
-        pub fn deinit(self: *UT, _: Allocator) void {
+        pub fn deinit(self: *UT, _: anytype) void {
             self.* = undefined;
         }
-        pub fn size(_: UT) usize {
+        pub fn size(_: UT, _: anytype) usize {
             return @sizeOf(UT);
         }
     };
@@ -817,17 +819,17 @@ pub fn MappedEnum(comptime vals: type, comptime T: type, comptime eql_: anytype)
         pub const InnerSpec = Spec(T);
         pub const UT = EnumT;
         pub const E = InnerSpec.E || error{InvalidVariant};
-        pub fn write(writer: anytype, in: UT) !void {
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
             switch (in) {
                 inline else => |v| {
-                    try InnerSpec.write(writer, @field(vals, @tagName(v)));
+                    try InnerSpec.write(writer, @field(vals, @tagName(v)), ctx);
                 },
             }
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
             var data: InnerSpec.UT = undefined;
-            try InnerSpec.read(reader, &data, a);
-            defer InnerSpec.deinit(&data, a);
+            try InnerSpec.read(reader, &data, ctx);
+            defer InnerSpec.deinit(&data, ctx);
             inline for (vinfo.decls) |decl| {
                 if (eql(@field(vals, decl.name), data)) {
                     out.* = @field(EnumT, decl.name);
@@ -838,12 +840,12 @@ pub fn MappedEnum(comptime vals: type, comptime T: type, comptime eql_: anytype)
                 std.debug.print("\nvariant: \"{s}\"\n", .{data});
             return error.InvalidVariant;
         }
-        pub fn deinit(self: *UT, _: Allocator) void {
+        pub fn deinit(self: *UT, _: anytype) void {
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
+        pub fn size(self: UT, ctx: anytype) usize {
             return switch (self) {
-                inline else => |v| InnerSpec.size(@field(vals, @tagName(v))),
+                inline else => |v| InnerSpec.size(@field(vals, @tagName(v)), ctx),
             };
         }
     };
@@ -859,18 +861,18 @@ pub fn Constant(
         pub const InnerSpec = Spec(T);
         pub const UT = void;
         pub const E = InnerSpec.E || error{InvalidConstant};
-        pub fn write(writer: anytype, _: UT) !void {
-            try InnerSpec.write(writer, value);
+        pub fn write(writer: anytype, _: UT, ctx: anytype) !void {
+            try InnerSpec.write(writer, value, ctx);
         }
-        pub fn read(reader: anytype, _: *UT, a: Allocator) !void {
+        pub fn read(reader: anytype, _: *UT, ctx: anytype) !void {
             var out: InnerSpec.UT = undefined;
-            try InnerSpec.read(reader, &out, a);
-            defer InnerSpec.deinit(&out, a);
+            try InnerSpec.read(reader, &out, ctx);
+            defer InnerSpec.deinit(&out, ctx);
             if (!eql(value, out)) return error.InvalidConstant;
         }
-        pub fn deinit(_: *UT, _: Allocator) void {}
-        pub fn size(_: UT) usize {
-            return InnerSpec.size(value);
+        pub fn deinit(_: *UT, _: anytype) void {}
+        pub fn size(_: UT, ctx: anytype) usize {
+            return InnerSpec.size(value, ctx);
         }
     };
 }
@@ -901,23 +903,23 @@ pub fn ConstantOptional(
         pub const UT = ?InnerSpec.UT;
         pub const E = InnerSpec.E;
 
-        pub fn write(writer: anytype, in: UT) !void {
-            try InnerSpec.write(writer, in orelse value);
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+            try InnerSpec.write(writer, in orelse value, ctx);
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
             out.* = @as(InnerSpec.UT, undefined);
-            try InnerSpec.read(reader, &(out.*.?), a);
+            try InnerSpec.read(reader, &(out.*.?), ctx);
             if (eql(out.*.?, value)) {
-                InnerSpec.deinit(&out.*.?, a);
+                InnerSpec.deinit(&out.*.?, ctx);
                 out.* = null;
             }
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
-            if (self.*) |*inner| InnerSpec.deinit(inner, a);
+        pub fn deinit(self: *UT, ctx: anytype) void {
+            if (self.*) |*inner| InnerSpec.deinit(inner, ctx);
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
-            return InnerSpec.size(self orelse value);
+        pub fn size(self: UT, ctx: anytype) usize {
+            return InnerSpec.size(self orelse value, ctx);
         }
     };
 }
@@ -927,7 +929,7 @@ pub fn ConstantOptional(
 /// map_fns should contain:
 /// - const O     // your output type (output when reading, input when writing)
 /// - fn from(O) Spec(T).UT                   // user -> writer
-/// - fn to(*Spec(T).UT, *O, Allocator) !void // reader -> user
+/// - fn to(*Spec(T).UT, *O, ctx) !void // reader -> user
 ///     // to fn should handle any necessary deallocation of the Spec(T).UT
 pub fn Mapped(
     comptime T: type,
@@ -939,19 +941,19 @@ pub fn Mapped(
         pub const E =
             if (@hasDecl(map_fns, "E")) InnerSpec.E || map_fns.E else InnerSpec.E;
 
-        pub fn write(writer: anytype, in: UT) !void {
-            try InnerSpec.write(writer, map_fns.from(in));
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+            try InnerSpec.write(writer, map_fns.from(in), ctx);
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
             var temp_out: InnerSpec.UT = undefined;
-            try InnerSpec.read(reader, &temp_out, a);
-            try map_fns.to(&temp_out, out, a);
+            try InnerSpec.read(reader, &temp_out, ctx);
+            try map_fns.to(&temp_out, out, ctx);
         }
-        pub fn deinit(self: *UT, _: Allocator) void {
+        pub fn deinit(self: *UT, _: anytype) void {
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
-            return InnerSpec.size(map_fns.from(self));
+        pub fn size(self: UT, ctx: anytype) usize {
+            return InnerSpec.size(map_fns.from(self), ctx);
         }
     };
 }
@@ -961,7 +963,7 @@ pub fn NumOffset(comptime T: type, comptime offset: comptime_int) type {
         pub fn from(in: O) O {
             return if (offset > 0) (in + offset) else (in - (-offset));
         }
-        pub fn to(in: *O, out: *O, _: Allocator) !void {
+        pub fn to(in: *O, out: *O, _: anytype) !void {
             out.* = if (offset > 0) (in.* - offset) else (in.* + (-offset));
         }
     });
@@ -973,7 +975,7 @@ pub fn Casted(comptime T: type, comptime Target: type) type {
         pub fn from(in: O) Spec(T).UT {
             return std.math.cast(Spec(T).UT, in).?;
         }
-        pub fn to(in: *Spec(T).UT, out: *O, _: Allocator) !void {
+        pub fn to(in: *Spec(T).UT, out: *O, _: anytype) !void {
             out.* = std.math.cast(O, in.*) orelse return error.InvalidCast;
         }
     });
@@ -993,7 +995,7 @@ pub fn BitCasted(comptime T: type, comptime Target: type) type {
         pub fn from(in: O) Spec(T).UT {
             return @bitCast(in);
         }
-        pub fn to(in: *Spec(T).UT, out: *O, _: Allocator) !void {
+        pub fn to(in: *Spec(T).UT, out: *O, _: anytype) !void {
             out.* = @bitCast(in.*);
         }
     });
@@ -1035,15 +1037,15 @@ pub fn doTest(
 ) !void {
     var reader = std.io.fixedBufferStream(buf);
     var result: ST.UT = undefined;
-    try ST.read(reader.reader(), &result, testing.allocator);
-    defer ST.deinit(&result, testing.allocator);
+    try ST.read(reader.reader(), &result, .{ .allocator = testing.allocator });
+    defer ST.deinit(&result, .{ .allocator = testing.allocator });
     try testing.expectEqualDeep(expected, result);
     //std.debug.print("\nexpected: {any}\nresult: {any}\n", .{ expected, result });
-    try testing.expectEqual(buf.len, ST.size(result));
+    try testing.expectEqual(buf.len, ST.size(result, .{}));
 
     var writebuf = std.ArrayList(u8).init(testing.allocator);
     defer writebuf.deinit();
-    try ST.write(writebuf.writer(), result);
+    try ST.write(writebuf.writer(), result, .{});
     try testing.expectEqualSlices(u8, buf, writebuf.items);
 
     if (check_allocations) {
@@ -1051,8 +1053,8 @@ pub fn doTest(
             pub fn read(allocator: Allocator, data: []const u8) !void {
                 var stream = std.io.fixedBufferStream(data);
                 var r: ST.UT = undefined;
-                try ST.read(stream.reader(), &r, allocator);
-                ST.deinit(&r, allocator);
+                try ST.read(stream.reader(), &r, .{ .allocator = allocator });
+                ST.deinit(&r, .{ .allocator = allocator });
             }
         }).read, .{buf}) catch |e| {
             if (e != error.SwallowedOutOfMemoryError) return e;
@@ -1066,26 +1068,26 @@ pub fn doTestOnValue(
 ) !void {
     var writebuf = std.ArrayList(u8).init(testing.allocator);
     defer writebuf.deinit();
-    try ST.write(writebuf.writer(), value);
+    try ST.write(writebuf.writer(), value, .{});
 
     var stream = std.io.fixedBufferStream(writebuf.items);
     var result: ST.UT = undefined;
-    try ST.read(stream.reader(), &result, testing.allocator);
-    defer ST.deinit(&result, testing.allocator);
+    try ST.read(stream.reader(), &result, .{ .allocator = testing.allocator });
+    defer ST.deinit(&result, .{ .allocator = testing.allocator });
 
     {
         errdefer std.debug.print("\ngot {any}\n", .{result});
         try testing.expectEqualDeep(value, result);
     }
-    try testing.expectEqual(writebuf.items.len, ST.size(result));
+    try testing.expectEqual(writebuf.items.len, ST.size(result, .{}));
 
     if (check_allocations) {
         testing.checkAllAllocationFailures(testing.allocator, (struct {
             pub fn read(allocator: Allocator, data: []const u8) !void {
                 var stream_ = std.io.fixedBufferStream(data);
                 var r: ST.UT = undefined;
-                try ST.read(stream_.reader(), &r, allocator);
-                ST.deinit(&r, allocator);
+                try ST.read(stream_.reader(), &r, .{ .allocator = allocator });
+                ST.deinit(&r, .{ .allocator = allocator });
             }
         }).read, .{writebuf.items}) catch |e| {
             if (e != error.SwallowedOutOfMemoryError) return e;

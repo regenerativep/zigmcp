@@ -65,28 +65,28 @@ pub const NamedTag = struct {
     pub const UT = @This();
     pub const E = ST.E || Tag.E || error{EndOfStream};
 
-    pub fn write(writer: anytype, in: UT) !void {
+    pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
         try writer.writeByte(@intFromEnum(in.tag));
         if (in.tag != .end) {
-            try ST.write(writer, in.name);
+            try ST.write(writer, in.name, ctx);
         }
     }
-    pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+    pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
         const tag = try Tag.fromInt(try reader.readByte());
         var name: []const u8 = "";
         if (tag != .end)
-            try ST.read(reader, &name, a);
+            try ST.read(reader, &name, ctx);
         out.* = .{
             .tag = tag,
             .name = name,
         };
     }
-    pub fn deinit(self: *UT, a: Allocator) void {
-        ST.deinit(&self.name, a);
+    pub fn deinit(self: *UT, ctx: anytype) void {
+        ST.deinit(&self.name, ctx);
         self.* = undefined;
     }
-    pub fn size(self: UT) usize {
-        return 1 + if (self.tag == .end) 0 else ST.size(self.name);
+    pub fn size(self: UT, ctx: anytype) usize {
+        return 1 + if (self.tag == .end) 0 else ST.size(self.name, ctx);
     }
 
     pub fn getTag(self: UT) Tag {
@@ -113,7 +113,7 @@ pub fn Compound(comptime T: type) type {
             MissingFields,
         };
 
-        pub fn write(writer: anytype, in: UT) !void {
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
             inline for (utinfo.fields, 0..) |field, i| blk: {
                 if (@typeInfo(field.type) == .Optional) {
                     if (@field(in, field.name) == null) break :blk;
@@ -128,12 +128,12 @@ pub fn Compound(comptime T: type) type {
                         specs[i].Name
                     else
                         field.name,
-                });
-                try specs[i].write(writer, d);
+                }, ctx);
+                try specs[i].write(writer, d, ctx);
             }
             try writer.writeByte(@intFromEnum(Tag.end));
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
             var written = std.StaticBitSet(specs.len).initEmpty();
             var must_write = comptime blk: {
                 var s = std.StaticBitSet(specs.len).initEmpty();
@@ -153,17 +153,17 @@ pub fn Compound(comptime T: type) type {
                     if (written.isSet(i)) {
                         if (@typeInfo(utinfo.fields[i].type) == .Optional) {
                             if (@field(out, utinfo.fields[i].name)) |*d|
-                                specs[i].deinit(d, a);
+                                specs[i].deinit(d, ctx);
                         } else {
-                            specs[i].deinit(&@field(out, utinfo.fields[i].name), a);
+                            specs[i].deinit(&@field(out, utinfo.fields[i].name), ctx);
                         }
                     }
                 }
             }
             blk: while (true) {
                 var named_tag: NamedTag = undefined;
-                try NamedTag.read(reader, &named_tag, a);
-                defer NamedTag.deinit(&named_tag, a);
+                try NamedTag.read(reader, &named_tag, ctx);
+                defer NamedTag.deinit(&named_tag, ctx);
                 if (named_tag.tag == .end) {
                     if (must_write.count() < specs.len) {
                         //inline for (utinfo.fields, 0..) |field, i| {
@@ -196,9 +196,9 @@ pub fn Compound(comptime T: type) type {
                             if (named_tag.tag != spec.NbtTag) {
                                 return error.InvalidTag;
                             }
-                            try spec.read(reader, d, a);
+                            try spec.read(reader, d, ctx);
                         } else {
-                            try spec.read(reader, d, a, named_tag.tag);
+                            try spec.read(reader, d, ctx, named_tag.tag);
                         }
                         written.set(i);
                         must_write.set(i);
@@ -208,20 +208,20 @@ pub fn Compound(comptime T: type) type {
                 return error.UnexpectedField;
             }
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
+        pub fn deinit(self: *UT, ctx: anytype) void {
             comptime var i = specs.len;
             inline while (i > 0) {
                 i -= 1;
                 if (@typeInfo(utinfo.fields[i].type) == .Optional) {
                     if (@field(self, utinfo.fields[i].name)) |*d|
-                        specs[i].deinit(d, a);
+                        specs[i].deinit(d, ctx);
                 } else {
-                    specs[i].deinit(&@field(self, utinfo.fields[i].name), a);
+                    specs[i].deinit(&@field(self, utinfo.fields[i].name), ctx);
                 }
             }
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
+        pub fn size(self: UT, ctx: anytype) usize {
             var total: usize = 1;
             inline for (utinfo.fields, 0..) |field, i| blk: {
                 if (@typeInfo(field.type) == .Optional) {
@@ -237,7 +237,7 @@ pub fn Compound(comptime T: type) type {
                         specs[i].Name
                     else
                         field.name,
-                }) + specs[i].size(d);
+                }, ctx) + specs[i].size(d, ctx);
             }
             return total;
         }
@@ -258,33 +258,37 @@ pub fn List(comptime T: type) type {
             EndOfStream,
             InvalidTag,
         };
-        pub fn write(writer: anytype, in: UT) (E || @TypeOf(writer).Error)!void {
+        pub fn write(
+            writer: anytype,
+            in: UT,
+            ctx: anytype,
+        ) (E || @TypeOf(writer).Error)!void {
             try writer.writeByte(@intFromEnum(tag));
-            try LenSpec.write(writer, in.len);
-            for (in) |item| try InnerSpec.write(writer, item);
+            try LenSpec.write(writer, in.len, ctx);
+            for (in) |item| try InnerSpec.write(writer, item, ctx);
         }
         pub fn read(
             reader: anytype,
             out: *UT,
-            a: Allocator,
+            ctx: anytype,
         ) (E || Allocator.Error || @TypeOf(reader).Error)!void {
             if ((try Tag.fromInt(try reader.readByte())) != tag)
                 return error.InvalidTag;
             var len: usize = undefined;
-            try LenSpec.read(reader, &len, undefined);
-            var arr = try a.alloc(InnerSpec.UT, len);
-            errdefer a.free(arr);
+            try LenSpec.read(reader, &len, ctx);
+            var arr = try ctx.allocator.alloc(InnerSpec.UT, len);
+            errdefer ctx.allocator.free(arr);
 
             for (arr, 0..) |*item, i| {
                 errdefer {
                     var j = i;
                     while (j > 0) {
                         j -= 1;
-                        InnerSpec.deinit(&arr[j], a);
+                        InnerSpec.deinit(&arr[j], ctx);
                     }
                 }
                 if (@hasDecl(InnerSpec, "NbtTag")) {
-                    try InnerSpec.read(reader, item, a);
+                    try InnerSpec.read(reader, item, ctx);
                 } else {
                     if (@typeInfo(@TypeOf(InnerSpec.read)).Fn.params.len != 4) {
                         @compileError(
@@ -295,23 +299,23 @@ pub fn List(comptime T: type) type {
                                 "\")",
                         );
                     }
-                    try InnerSpec.read(reader, item, a, tag);
+                    try InnerSpec.read(reader, item, ctx, tag);
                 }
             }
             out.* = arr;
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
+        pub fn deinit(self: *UT, ctx: anytype) void {
             var i = self.len;
             while (i > 0) {
                 i -= 1;
-                InnerSpec.deinit(@constCast(&self.*[i]), a);
+                InnerSpec.deinit(@constCast(&self.*[i]), ctx);
             }
-            a.free(self.*);
+            ctx.allocator.free(self.*);
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
-            var total = 1 + LenSpec.size(self.len);
-            for (self) |item| total += InnerSpec.size(item);
+        pub fn size(self: UT, ctx: anytype) usize {
+            var total = 1 + LenSpec.size(self.len, ctx);
+            for (self) |item| total += InnerSpec.size(item, ctx);
             return total;
         }
         pub const NbtTag = Tag.list;
@@ -432,37 +436,38 @@ pub const DynamicValue = union(Tag) {
         writer: anytype,
         in: UT,
         depth: u32,
+        ctx: anytype,
     ) (@TypeOf(writer).Error || E)!void {
         if (depth == 0) return error.TooDeep;
         switch (in) {
             .end => {},
             inline .byte, .short, .int, .long, .float, .double => |d| {
-                try Num(@TypeOf(d)).write(writer, d);
+                try Num(@TypeOf(d)).write(writer, d, ctx);
             },
             inline .byte_array, .int_array, .long_array => |d| {
                 try serde.PrefixedArray(
                     Num(i32),
                     Num(@typeInfo(@TypeOf(d)).Pointer.child),
                     .{},
-                ).write(writer, d);
+                ).write(writer, d, ctx);
             },
             .list => |d| {
                 try writer.writeByte(
                     @intFromEnum(if (d.len == 0) .end else @as(Tag, d[0])),
                 );
-                try Num(i32).write(writer, @intCast(d.len));
-                for (d) |b| try DynamicValue.write(writer, b, depth - 1);
+                try Num(i32).write(writer, @intCast(d.len), ctx);
+                for (d) |b| try DynamicValue.write(writer, b, depth - 1, ctx);
             },
             .string => |d| {
-                try serde.PrefixedArray(u16, u8, .{}).write(writer, d);
+                try serde.PrefixedArray(u16, u8, .{}).write(writer, d, ctx);
             },
-            .compound => |d| try DynamicCompound.write(writer, d, depth),
+            .compound => |d| try DynamicCompound.write(writer, d, depth, ctx),
         }
     }
     pub fn read(
         reader: anytype,
         out: *UT,
-        a: Allocator,
+        ctx: anytype,
         tag: Tag,
         depth: u32,
     ) (@TypeOf(reader).Error || Allocator.Error || E)!void {
@@ -471,7 +476,7 @@ pub const DynamicValue = union(Tag) {
             .end => out.* = .end,
             inline .byte, .short, .int, .long, .float, .double => |v| {
                 out.* = @unionInit(DynamicValue, @tagName(v), undefined);
-                try Num(typeFromTag(v)).read(reader, &@field(out, @tagName(v)), a);
+                try Num(typeFromTag(v)).read(reader, &@field(out, @tagName(v)), ctx);
             },
             inline .byte_array, .int_array, .long_array => |v| {
                 out.* = @unionInit(DynamicValue, @tagName(v), undefined);
@@ -479,55 +484,57 @@ pub const DynamicValue = union(Tag) {
                     Num(i32),
                     Num(@typeInfo(typeFromTag(v)).Pointer.child),
                     .{},
-                ).read(reader, &@field(out, @tagName(v)), a);
+                ).read(reader, &@field(out, @tagName(v)), ctx);
             },
             .string => {
                 out.* = .{ .string = undefined };
-                try serde.PrefixedArray(u16, u8, .{}).read(reader, &out.string, a);
+                try serde.PrefixedArray(u16, u8, .{}).read(reader, &out.string, ctx);
             },
             .list => {
                 const inner_tag = try Tag.fromInt(try reader.readByte());
                 var len_: i32 = undefined;
-                try Num(i32).read(reader, &len_, a);
+                try Num(i32).read(reader, &len_, ctx);
                 const len = std.math.cast(usize, len_) orelse
                     return error.InvalidLength;
-                var data = try a.alloc(DynamicValue, len);
-                errdefer a.free(data);
+                var data = try ctx.allocator.alloc(DynamicValue, len);
+                errdefer ctx.allocator.free(data);
                 for (data, 0..) |*item, i| {
                     errdefer {
                         var j = i;
                         while (j > 0) {
                             j -= 1;
-                            DynamicValue.deinit(&data[j], a);
+                            DynamicValue.deinit(&data[j], ctx);
                         }
                     }
-                    try DynamicValue.read(reader, item, a, inner_tag, depth - 1);
+                    try DynamicValue.read(reader, item, ctx, inner_tag, depth - 1);
                 }
                 out.* = .{ .list = data };
             },
             .compound => {
                 out.* = .{ .compound = undefined };
-                try DynamicCompound.read(reader, &out.compound, a, depth);
+                try DynamicCompound.read(reader, &out.compound, ctx, depth);
             },
         }
     }
-    pub fn deinit(self: *UT, a: Allocator) void {
+    pub fn deinit(self: *UT, ctx: anytype) void {
         switch (self.*) {
             .end, .byte, .short, .int, .long, .float, .double => {},
-            inline .byte_array, .int_array, .long_array, .string => |d| a.free(d),
+            inline .byte_array, .int_array, .long_array, .string => |d| {
+                ctx.allocator.free(d);
+            },
             .list => |d| {
                 var i = d.len;
                 while (i > 0) {
                     i -= 1;
-                    DynamicValue.deinit(@constCast(&d[i]), a);
+                    DynamicValue.deinit(@constCast(&d[i]), ctx);
                 }
-                a.free(d);
+                ctx.allocator.free(d);
             },
-            .compound => |*d| DynamicCompound.deinit(d, a),
+            .compound => |*d| DynamicCompound.deinit(d, ctx),
         }
         self.* = undefined;
     }
-    pub fn size(self: UT) usize {
+    pub fn size(self: UT, ctx: anytype) usize {
         switch (self) {
             inline .end, .byte, .short, .int, .long, .float, .double => |d| {
                 return @sizeOf(@TypeOf(d));
@@ -539,10 +546,10 @@ pub const DynamicValue = union(Tag) {
             .string => |d| return @sizeOf(u16) + d.len,
             .list => |d| {
                 var total: usize = @sizeOf(i32) + 1;
-                for (d) |item| total += DynamicValue.size(item);
+                for (d) |item| total += DynamicValue.size(item, ctx);
                 return total;
             },
-            .compound => |d| return DynamicCompound.size(d),
+            .compound => |d| return DynamicCompound.size(d, ctx),
         }
     }
     pub fn getTag(self: UT) Tag {
@@ -628,18 +635,19 @@ pub const DynamicCompound = struct {
         writer: anytype,
         in: UT,
         depth: u32,
+        ctx: anytype,
     ) (@TypeOf(writer).Error || E)!void {
         assert(depth > 0);
         for (in) |kv| {
-            try NamedTag.write(writer, .{ .tag = kv.value, .name = kv.name });
-            try DynamicValue.write(writer, kv.value, depth - 1);
+            try NamedTag.write(writer, .{ .tag = kv.value, .name = kv.name }, ctx);
+            try DynamicValue.write(writer, kv.value, depth - 1, ctx);
         }
-        try NamedTag.write(writer, .{ .tag = .end, .name = "" });
+        try NamedTag.write(writer, .{ .tag = .end, .name = "" }, ctx);
     }
     pub fn read(
         reader: anytype,
         out: *UT,
-        a: Allocator,
+        ctx: anytype,
         depth: u32,
     ) (@TypeOf(reader).Error || Allocator.Error || E)!void {
         assert(depth > 0);
@@ -648,41 +656,41 @@ pub const DynamicCompound = struct {
             var i = list.items.len;
             while (i > 0) {
                 i -= 1;
-                a.free(list.items[i].name);
-                DynamicValue.deinit(&list.items[i].value, a);
+                ctx.allocator.free(list.items[i].name);
+                DynamicValue.deinit(&list.items[i].value, ctx);
             }
-            list.deinit(a);
+            list.deinit(ctx.allocator);
         }
         while (true) {
             var named_tag: NamedTag = undefined;
-            try NamedTag.read(reader, &named_tag, a);
+            try NamedTag.read(reader, &named_tag, ctx);
             if (named_tag.tag == .end) break;
-            errdefer NamedTag.deinit(&named_tag, a);
+            errdefer NamedTag.deinit(&named_tag, ctx);
 
-            var item = try list.addOne(a);
+            var item = try list.addOne(ctx.allocator);
             errdefer list.items.len -= 1;
 
-            try DynamicValue.read(reader, &item.value, a, named_tag.tag, depth - 1);
-            errdefer DynamicValue.deinit(&item, a);
+            try DynamicValue.read(reader, &item.value, ctx, named_tag.tag, depth - 1);
+            errdefer DynamicValue.deinit(&item, ctx);
             item.name = named_tag.name;
         }
-        out.* = try list.toOwnedSlice(a);
+        out.* = try list.toOwnedSlice(ctx.allocator);
     }
-    pub fn deinit(self: *UT, a: Allocator) void {
+    pub fn deinit(self: *UT, ctx: anytype) void {
         var i = self.len;
         while (i > 0) {
             i -= 1;
-            a.free(self.*[i].name);
-            DynamicValue.deinit(@constCast(&self.*[i].value), a);
+            ctx.allocator.free(self.*[i].name);
+            DynamicValue.deinit(@constCast(&self.*[i].value), ctx);
         }
-        a.free(self.*);
+        ctx.allocator.free(self.*);
         self.* = undefined;
     }
-    pub fn size(self: UT) usize {
+    pub fn size(self: UT, ctx: anytype) usize {
         var total: usize = 1;
         for (self) |kv| total +=
-            NamedTag.size(.{ .name = kv.name, .tag = kv.value }) +
-            DynamicValue.size(kv.value);
+            NamedTag.size(.{ .name = kv.name, .tag = kv.value }, ctx) +
+            DynamicValue.size(kv.value, ctx);
         return total;
     }
     pub const NbtTag = Tag.compound;
@@ -698,17 +706,17 @@ pub fn Dynamic(
     return if (kind == .compound) struct {
         pub const UT = DynamicCompound.UT;
         pub const E = DynamicCompound.E;
-        pub fn write(writer: anytype, in: UT) !void {
-            try DynamicCompound.write(writer, in, MaxDepth);
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+            try DynamicCompound.write(writer, in, MaxDepth, ctx);
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
-            try DynamicCompound.read(reader, out, a, MaxDepth);
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
+            try DynamicCompound.read(reader, out, ctx, MaxDepth);
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
-            DynamicCompound.deinit(self, a);
+        pub fn deinit(self: *UT, ctx: anytype) void {
+            DynamicCompound.deinit(self, ctx);
         }
-        pub fn size(self: UT) usize {
-            return DynamicCompound.size(self);
+        pub fn size(self: UT, ctx: anytype) usize {
+            return DynamicCompound.size(self, ctx);
         }
         pub const NbtTag = Tag.compound;
         pub fn getTag(_: UT) Tag {
@@ -717,17 +725,17 @@ pub fn Dynamic(
     } else if (kind == .tag) struct {
         pub const UT = DynamicValue.UT;
         pub const E = DynamicValue.E;
-        pub fn write(writer: anytype, in: UT) !void {
-            try DynamicValue.write(writer, in, MaxDepth);
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+            try DynamicValue.write(writer, in, MaxDepth, ctx);
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
-            try DynamicValue.read(reader, out, a, kind.tag, MaxDepth);
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
+            try DynamicValue.read(reader, out, ctx, kind.tag, MaxDepth);
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
-            DynamicValue.deinit(self, a);
+        pub fn deinit(self: *UT, ctx: anytype) void {
+            DynamicValue.deinit(self, ctx);
         }
-        pub fn size(self: UT) usize {
-            return DynamicValue.size(self);
+        pub fn size(self: UT, ctx: anytype) usize {
+            return DynamicValue.size(self, ctx);
         }
         pub const NbtTag = kind.tag;
         pub fn getTag(_: UT) Tag {
@@ -736,17 +744,17 @@ pub fn Dynamic(
     } else struct {
         pub const UT = DynamicValue.UT;
         pub const E = DynamicValue.E;
-        pub fn write(writer: anytype, in: UT) !void {
-            try DynamicValue.write(writer, in, MaxDepth);
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+            try DynamicValue.write(writer, in, MaxDepth, ctx);
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator, tag: Tag) !void {
-            try DynamicValue.read(reader, out, a, tag, MaxDepth);
+        pub fn read(reader: anytype, out: *UT, ctx: anytype, tag: Tag) !void {
+            try DynamicValue.read(reader, out, ctx, tag, MaxDepth);
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
-            DynamicValue.deinit(self, a);
+        pub fn deinit(self: *UT, ctx: anytype) void {
+            DynamicValue.deinit(self, ctx);
         }
-        pub fn size(self: UT) usize {
-            return DynamicValue.size(self);
+        pub fn size(self: UT, ctx: anytype) usize {
+            return DynamicValue.size(self, ctx);
         }
         pub fn getTag(self: UT) Tag {
             return self;
@@ -766,39 +774,39 @@ pub fn Multiple(comptime T: type) type {
         fn tagI(comptime v: anytype) usize {
             return @intFromEnum(@field(FieldEnumT, @tagName(v)));
         }
-        pub fn write(writer: anytype, in: UT) !void {
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
             switch (in) {
                 inline else => |d, v| {
-                    try specs[comptime tagI(v)].write(writer, d);
+                    try specs[comptime tagI(v)].write(writer, d, ctx);
                 },
             }
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator, tag: Tag) !void {
+        pub fn read(reader: anytype, out: *UT, ctx: anytype, tag: Tag) !void {
             switch (tag) {
                 inline else => |v| if (@hasField(T, @tagName(v))) {
                     out.* = @unionInit(UT, @tagName(v), undefined);
                     try specs[comptime tagI(v)].read(
                         reader,
                         &@field(out, @tagName(v)),
-                        a,
+                        ctx,
                     );
                     return;
                 },
             }
             return error.InvalidTag;
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
+        pub fn deinit(self: *UT, ctx: anytype) void {
             switch (self.*) {
                 inline else => |*d, v| {
-                    specs[comptime tagI(v)].deinit(d, a);
+                    specs[comptime tagI(v)].deinit(d, ctx);
                 },
             }
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
+        pub fn size(self: UT, ctx: anytype) usize {
             switch (self) {
                 inline else => |d, v| {
-                    return specs[comptime tagI(v)].size(d);
+                    return specs[comptime tagI(v)].size(d, ctx);
                 },
             }
         }
@@ -818,23 +826,23 @@ pub fn Named(comptime name: ?[]const u8, comptime T: type) type {
             NamedTag.E ||
             Tag.E ||
             error{ EndOfStream, InvalidTag, UnexpectedName };
-        pub fn write(writer: anytype, in: UT) !void {
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
             if (name != null) {
                 try NamedTag.write(writer, .{
                     .name = name.?,
                     .tag = InnerSpec.getTag(in),
-                });
+                }, ctx);
             } else {
                 try writer.writeByte(@intFromEnum(InnerSpec.getTag(in)));
             }
-            try InnerSpec.write(writer, in);
+            try InnerSpec.write(writer, in, ctx);
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
             const tag = blk: {
                 if (name) |test_name| {
                     var named_tag: NamedTag = undefined;
-                    try NamedTag.read(reader, &named_tag, a);
-                    defer NamedTag.deinit(&named_tag, a);
+                    try NamedTag.read(reader, &named_tag, ctx);
+                    defer NamedTag.deinit(&named_tag, ctx);
                     if (!mem.eql(u8, test_name, named_tag.name))
                         return error.UnexpectedName;
                     break :blk named_tag.tag;
@@ -846,22 +854,22 @@ pub fn Named(comptime name: ?[]const u8, comptime T: type) type {
                 if (tag != InnerSpec.NbtTag) {
                     return error.InvalidTag;
                 }
-                try InnerSpec.read(reader, out, a);
+                try InnerSpec.read(reader, out, ctx);
             } else {
-                try InnerSpec.read(reader, out, a, tag);
+                try InnerSpec.read(reader, out, ctx, tag);
             }
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
-            InnerSpec.deinit(self, a);
+        pub fn deinit(self: *UT, ctx: anytype) void {
+            InnerSpec.deinit(self, ctx);
         }
-        pub fn size(self: UT) usize {
-            return InnerSpec.size(self) + if (name == null)
+        pub fn size(self: UT, ctx: anytype) usize {
+            return InnerSpec.size(self, ctx) + if (name == null)
                 1
             else
                 NamedTag.size(.{
                     .name = name.?,
                     .tag = InnerSpec.getTag(self),
-                });
+                }, ctx);
         }
     };
 }
@@ -877,19 +885,19 @@ pub fn Constant(
         pub const UT = void;
         pub const E = InnerSpec.E || error{InvalidConstant};
         pub const NbtTag = InnerSpec.NbtTag;
-        pub fn write(writer: anytype, _: UT) !void {
-            try InnerSpec.write(writer, value);
+        pub fn write(writer: anytype, _: UT, ctx: anytype) !void {
+            try InnerSpec.write(writer, value, ctx);
         }
-        pub fn read(reader: anytype, _: *UT, a: Allocator) !void {
+        pub fn read(reader: anytype, _: *UT, ctx: anytype) !void {
             var out: InnerSpec.UT = undefined;
-            try InnerSpec.read(reader, &out, a);
-            defer InnerSpec.deinit(&out, a);
+            try InnerSpec.read(reader, &out, ctx);
+            defer InnerSpec.deinit(&out, ctx);
             if (!eql(value, out))
                 return error.InvalidConstant;
         }
-        pub fn deinit(_: *UT, _: Allocator) void {}
-        pub fn size(_: UT) usize {
-            return InnerSpec.size(value);
+        pub fn deinit(_: *UT, _: anytype) void {}
+        pub fn size(_: UT, ctx: anytype) usize {
+            return InnerSpec.size(value, ctx);
         }
         pub fn getTag(_: UT) Tag {
             return InnerSpec.getTag(value);
@@ -930,18 +938,18 @@ pub fn doDynamicTestOnValue(
 ) !void {
     var writebuf = std.ArrayList(u8).init(testing.allocator);
     defer writebuf.deinit();
-    try ST.write(writebuf.writer(), value);
+    try ST.write(writebuf.writer(), value, .{});
 
     var stream = std.io.fixedBufferStream(writebuf.items);
     var result: ST.UT = undefined;
-    try ST.read(stream.reader(), &result, testing.allocator);
-    defer ST.deinit(&result, testing.allocator);
+    try ST.read(stream.reader(), &result, .{ .allocator = testing.allocator });
+    defer ST.deinit(&result, .{ .allocator = testing.allocator });
 
     {
         errdefer std.debug.print("\ngot {any}\n", .{result});
         try testing.expectEqualDeep(value, result);
     }
-    try testing.expectEqual(writebuf.items.len, ST.size(result));
+    try testing.expectEqual(writebuf.items.len, ST.size(result, .{}));
 
     const DynamicST = if (named)
         Named(null, Dynamic(.any, @import("main.zig").MaxNbtDepth))
@@ -949,16 +957,20 @@ pub fn doDynamicTestOnValue(
         Dynamic(.compound, @import("main.zig").MaxNbtDepth);
     var dynamic_result: DynamicST.UT = undefined;
     stream = std.io.fixedBufferStream(writebuf.items);
-    try DynamicST.read(stream.reader(), &dynamic_result, testing.allocator);
-    defer DynamicST.deinit(&dynamic_result, testing.allocator);
-    try testing.expectEqual(writebuf.items.len, DynamicST.size(dynamic_result));
+    try DynamicST.read(
+        stream.reader(),
+        &dynamic_result,
+        .{ .allocator = testing.allocator },
+    );
+    defer DynamicST.deinit(&dynamic_result, .{ .allocator = testing.allocator });
+    try testing.expectEqual(writebuf.items.len, DynamicST.size(dynamic_result, .{}));
 
     if (check_allocations) {
         testing.checkAllAllocationFailures(testing.allocator, (struct {
             pub fn read(allocator: Allocator, data: []const u8) !void {
                 var stream_ = std.io.fixedBufferStream(data);
                 var r: ST.UT = undefined;
-                try ST.read(stream_.reader(), &r, allocator);
+                try ST.read(stream_.reader(), &r, .{ .allocator = allocator });
                 ST.deinit(&r, allocator);
             }
         }).read, .{writebuf.items}) catch |e| {
@@ -1041,13 +1053,13 @@ test "bigtest.nbt, static" {
     var stream = std.io.fixedBufferStream(buf);
 
     var result: ST.UT = undefined;
-    try ST.read(stream.reader(), &result, testing.allocator);
-    defer ST.deinit(&result, testing.allocator);
-    try testing.expectEqual(buf.len, ST.size(result));
+    try ST.read(stream.reader(), &result, .{ .allocator = testing.allocator });
+    defer ST.deinit(&result, .{ .allocator = testing.allocator });
+    try testing.expectEqual(buf.len, ST.size(result, .{}));
 
     var writebuf = std.ArrayList(u8).init(testing.allocator);
     defer writebuf.deinit();
-    try ST.write(writebuf.writer(), result);
+    try ST.write(writebuf.writer(), result, .{});
     try testing.expectEqualSlices(u8, buf, writebuf.items);
 
     //std.debug.print("\nresult: {any}\n", .{result});
@@ -1127,12 +1139,12 @@ test "bigtest.nbt, dynamic" {
 
     const ST = Named("Level", Dynamic(.any, 20));
     var result: ST.UT = undefined;
-    try ST.read(stream.reader(), &result, testing.allocator);
-    defer ST.deinit(&result, testing.allocator);
+    try ST.read(stream.reader(), &result, .{ .allocator = testing.allocator });
+    defer ST.deinit(&result, .{ .allocator = testing.allocator });
 
     var writebuf = std.ArrayList(u8).init(testing.allocator);
     defer writebuf.deinit();
-    try ST.write(writebuf.writer(), result);
+    try ST.write(writebuf.writer(), result, .{});
     try testing.expectEqualSlices(u8, buf, writebuf.items);
 
     //try DynamicValue.print(result, "Level", std.io.getStdErr().writer(), 0);

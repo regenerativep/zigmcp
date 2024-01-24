@@ -271,10 +271,14 @@ pub const CommandNode = struct {
         fn BrigadierRange(comptime T: type) type {
             return struct {
                 const info = @typeInfo(InnerSpec.UT);
-                const max_value =
-                    if (info == .Float) math.floatMax(InnerSpec.UT) else math.maxInt(InnerSpec.UT);
-                const min_value =
-                    if (info == .Float) math.floatMin(InnerSpec.UT) else math.minInt(InnerSpec.UT);
+                const max_value = if (info == .Float)
+                    math.floatMax(InnerSpec.UT)
+                else
+                    math.maxInt(InnerSpec.UT);
+                const min_value = if (info == .Float)
+                    math.floatMin(InnerSpec.UT)
+                else
+                    math.minInt(InnerSpec.UT);
                 pub const InnerSpec = serde.Num(T, .big);
                 pub const E = InnerSpec.E || error{EndOfStream};
 
@@ -282,35 +286,41 @@ pub const CommandNode = struct {
                 max: InnerSpec.UT,
 
                 pub const UT = @This();
-                pub fn write(writer: anytype, in: @This()) !void {
+                pub fn write(writer: anytype, in: @This(), ctx: anytype) !void {
                     try writer.writeByte(
                         (if (in.min != min_value) @as(u8, 0b01) else @as(u8, 0)) |
                             (if (in.max != max_value) @as(u8, 0b10) else @as(u8, 0)),
                     );
-                    if (in.min != min_value) try InnerSpec.write(writer, in.min);
-                    if (in.max != max_value) try InnerSpec.write(writer, in.max);
+                    if (in.min != min_value) try InnerSpec.write(writer, in.min, ctx);
+                    if (in.max != max_value) try InnerSpec.write(writer, in.max, ctx);
                 }
-                pub fn read(reader: anytype, out: *@This(), a: Allocator) !void {
+                pub fn read(reader: anytype, out: *@This(), ctx: anytype) !void {
                     const b = try reader.readByte();
                     if ((b & 0b01) != 0) {
-                        try InnerSpec.read(reader, &out.min, a);
+                        try InnerSpec.read(reader, &out.min, ctx);
                     } else {
                         out.min = min_value;
                     }
                     if ((b & 0b10) != 0) {
-                        try InnerSpec.read(reader, &out.max, a);
+                        try InnerSpec.read(reader, &out.max, ctx);
                     } else {
                         out.max = max_value;
                     }
                 }
-                pub fn size(self: @This()) usize {
+                pub fn size(self: @This(), ctx: anytype) usize {
                     return 1 +
-                        (if (self.min != min_value) InnerSpec.size(self.min) else 0) +
-                        (if (self.max != max_value) InnerSpec.size(self.max) else 0);
+                        (if (self.min != min_value)
+                        InnerSpec.size(self.min, ctx)
+                    else
+                        0) +
+                        (if (self.max != max_value)
+                        InnerSpec.size(self.max, ctx)
+                    else
+                        0);
                 }
-                pub fn deinit(self: *@This(), a: Allocator) void {
-                    InnerSpec.deinit(&self.max, a);
-                    InnerSpec.deinit(&self.min, a);
+                pub fn deinit(self: *@This(), ctx: anytype) void {
+                    InnerSpec.deinit(&self.max, ctx);
+                    InnerSpec.deinit(&self.min, ctx);
                     self.* = undefined;
                 }
             };
@@ -416,80 +426,83 @@ pub const CommandNode = struct {
         ParserSpec.E || SuggestionsSpec.E || VarI32.E;
 
     pub const UT = @This();
-    pub fn write(writer: anytype, in: UT) !void {
+    pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
         try FlagsSpec.write(writer, .{
             .node_type = in.data,
             .is_executable = in.is_executable,
             .has_redirect = in.redirect_node != null,
             .has_suggestions_type = in.suggestion != null,
-        });
-        try ChildrenSpec.write(writer, in.children);
+        }, ctx);
+        try ChildrenSpec.write(writer, in.children, ctx);
         if (in.redirect_node) |redirect_node|
-            try VarI32.write(writer, redirect_node);
+            try VarI32.write(writer, redirect_node, ctx);
         switch (in.data) {
             .argument => |d| {
-                try NameSpec.write(writer, d.name);
-                try ParserSpec.write(writer, d.parser);
+                try NameSpec.write(writer, d.name, ctx);
+                try ParserSpec.write(writer, d.parser, ctx);
             },
             .literal => |d| {
-                try NameSpec.write(writer, d.name);
+                try NameSpec.write(writer, d.name, ctx);
             },
             else => {},
         }
         if (in.suggestion) |suggestion|
-            try SuggestionsSpec.write(writer, suggestion);
+            try SuggestionsSpec.write(writer, suggestion, ctx);
     }
-    pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+    pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
         var flags: FlagsSpec.UT = undefined;
-        try FlagsSpec.read(reader, &flags, a);
+        try FlagsSpec.read(reader, &flags, ctx);
         out.is_executable = flags.is_executable;
-        try ChildrenSpec.read(reader, &out.children, a);
+        try ChildrenSpec.read(reader, &out.children, ctx);
         if (flags.has_redirect) {
             out.redirect_node = @as(VarI32.UT, undefined);
-            try VarI32.read(reader, &out.redirect_node.?, a);
+            try VarI32.read(reader, &out.redirect_node.?, ctx);
         } else {
             out.redirect_node = null;
         }
         if (flags.node_type == .literal) {
             out.data = .{ .literal = undefined };
-            try NameSpec.read(reader, &out.data.literal.name, a);
+            try NameSpec.read(reader, &out.data.literal.name, ctx);
         } else if (flags.node_type == .argument) {
             out.data = .{ .argument = undefined };
-            try NameSpec.read(reader, &out.data.argument.name, a);
-            try ParserSpec.read(reader, &out.data.argument.parser, a);
+            try NameSpec.read(reader, &out.data.argument.name, ctx);
+            try ParserSpec.read(reader, &out.data.argument.parser, ctx);
         } else {
             out.data = .{ .root = {} };
         }
         if (flags.has_suggestions_type) {
             out.suggestion = @as(SuggestionsSpec.UT, undefined);
-            try SuggestionsSpec.read(reader, &out.suggestion.?, a);
+            try SuggestionsSpec.read(reader, &out.suggestion.?, ctx);
         } else {
             out.suggestion = null;
         }
     }
-    pub fn size(self: UT) usize {
-        return 1 + ChildrenSpec.size(self.children) +
-            (if (self.redirect_node) |n| VarI32.size(n) else 0) + switch (self.data) {
-            .argument => |d| NameSpec.size(d.name) + ParserSpec.size(d.parser),
-            .literal => |d| NameSpec.size(d.name),
+    pub fn size(self: UT, ctx: anytype) usize {
+        return 1 + ChildrenSpec.size(self.children, ctx) +
+            (if (self.redirect_node) |n| VarI32.size(n, ctx) else 0) +
+            switch (self.data) {
+            .argument => |d| NameSpec.size(d.name, ctx) + ParserSpec.size(d.parser, ctx),
+            .literal => |d| NameSpec.size(d.name, ctx),
             else => 0,
-        } +
-            (if (self.suggestion) |suggestion| SuggestionsSpec.size(suggestion) else 0);
+        } + (if (self.suggestion) |suggestion|
+            SuggestionsSpec.size(suggestion, ctx)
+        else
+            0);
     }
-    pub fn deinit(self: *UT, a: Allocator) void {
+    pub fn deinit(self: *UT, ctx: anytype) void {
         if (self.suggestion) |*suggestion|
-            SuggestionsSpec.deinit(suggestion, a);
+            SuggestionsSpec.deinit(suggestion, ctx);
         switch (self.data) {
             .argument => |*d| {
-                ParserSpec.deinit(&d.parser, a);
-                NameSpec.deinit(&d.name, a);
+                ParserSpec.deinit(&d.parser, ctx);
+                NameSpec.deinit(&d.name, ctx);
             },
             .literal => |*d| {
-                NameSpec.deinit(&d.name, a);
+                NameSpec.deinit(&d.name, ctx);
             },
             else => {},
         }
-        ChildrenSpec.deinit(&self.children, a);
+        ChildrenSpec.deinit(&self.children, ctx);
         self.* = undefined;
     }
 };
@@ -525,7 +538,7 @@ pub fn PlusOne(comptime T: type) type {
         pub fn from(in_: O) O {
             return if (in_) |in| in + 1 else null;
         }
-        pub fn to(in_: *O, out: *O, _: Allocator) !void {
+        pub fn to(in_: *O, out: *O, _: anytype) !void {
             out.* = if (in_.*) |in| in - 1 else null;
         }
     });
@@ -1024,32 +1037,32 @@ pub const AdvancementDisplay = serde.Struct(struct {
 
         pub const UT = @This();
         pub const E = Identifier.E || FlagsSpec.E;
-        pub fn write(writer: anytype, in: UT) !void {
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
             try FlagsSpec.write(writer, .{
                 .has_background_texture = in.background_texture != null,
                 .show_toast = in.show_toast,
                 .hidden = in.hidden,
-            });
-            if (in.background_texture) |v| try Identifier.write(writer, v);
+            }, ctx);
+            if (in.background_texture) |v| try Identifier.write(writer, v, ctx);
         }
-        pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
             var flags: FlagsSpec.UT = undefined;
-            try FlagsSpec.read(reader, &flags, undefined);
+            try FlagsSpec.read(reader, &flags, ctx);
             out.show_toast = flags.show_toast;
             out.hidden = flags.hidden;
             if (flags.has_background_texture) {
                 out.background_texture = @as(Identifier.UT, undefined);
-                try Identifier.read(reader, &out.background_texture.?, a);
+                try Identifier.read(reader, &out.background_texture.?, ctx);
             } else {
                 out.background_texture = null;
             }
         }
-        pub fn deinit(self: *UT, a: Allocator) void {
-            if (self.background_texture) |*v| Identifier.deinit(v, a);
+        pub fn deinit(self: *UT, ctx: anytype) void {
+            if (self.background_texture) |*v| Identifier.deinit(v, ctx);
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
-            return 1 + if (self.background_texture) |v| Identifier.size(v) else 0;
+        pub fn size(self: UT, ctx: anytype) usize {
+            return 1 + if (self.background_texture) |v| Identifier.size(v, ctx) else 0;
         }
     },
     x_coord: f32,
@@ -1285,26 +1298,26 @@ pub const PlayerInfoUpdate = struct {
         .{ "update_display_name", UpdateDisplayNameSpec },
     };
 
-    pub fn write(writer: anytype, in: UT) !void {
-        try ActionsSpec.write(writer, in.actions);
-        try VarI32.write(writer, @intCast(in.player_actions.len));
+    pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+        try ActionsSpec.write(writer, in.actions, ctx);
+        try VarI32.write(writer, @intCast(in.player_actions.len), ctx);
         for (in.player_actions) |player_action| {
-            try Uuid.write(writer, player_action.uuid);
+            try Uuid.write(writer, player_action.uuid, ctx);
             inline for (action_specs) |pair| {
                 if (@field(player_action, pair[0])) |action_field| {
-                    try pair[1].write(writer, action_field);
+                    try pair[1].write(writer, action_field, ctx);
                 }
             }
         }
     }
-    pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
-        try ActionsSpec.read(reader, &out.actions, undefined);
+    pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
+        try ActionsSpec.read(reader, &out.actions, ctx);
         var len: usize = undefined;
-        try serde.Casted(VarI32, usize).read(reader, &len, undefined);
-        const actions = try a.alloc(PlayerAction, len);
-        errdefer a.free(actions);
+        try serde.Casted(VarI32, usize).read(reader, &len, ctx);
+        const actions = try ctx.allocator.alloc(PlayerAction, len);
+        errdefer ctx.allocator.free(actions);
         for (actions, 0..) |*player_action, i| {
-            try Uuid.read(reader, &player_action.uuid, undefined);
+            try Uuid.read(reader, &player_action.uuid, ctx);
             errdefer {
                 var j = i;
                 while (j > 0) {
@@ -1314,7 +1327,7 @@ pub const PlayerInfoUpdate = struct {
                         k -= 1;
                         const pair = action_specs[k];
                         if (@field(actions[j], pair[0])) |*item| {
-                            pair[1].deinit(item, a);
+                            pair[1].deinit(item, ctx);
                         }
                     }
                 }
@@ -1327,12 +1340,12 @@ pub const PlayerInfoUpdate = struct {
                             k -= 1;
                             const pair_e = action_specs[k];
                             if (@field(actions[j], pair_e[0])) |*item| {
-                                pair_e[1].deinit(item, a);
+                                pair_e[1].deinit(item, ctx);
                             }
                         }
                     }
                     @field(player_action, pair[0]) = @as(pair[1].UT, undefined);
-                    try pair[1].read(reader, &@field(player_action, pair[0]).?, a);
+                    try pair[1].read(reader, &@field(player_action, pair[0]).?, ctx);
                 } else {
                     @field(player_action, pair[0]) = null;
                 }
@@ -1340,7 +1353,7 @@ pub const PlayerInfoUpdate = struct {
         }
         out.player_actions = actions;
     }
-    pub fn deinit(self: *UT, a: Allocator) void {
+    pub fn deinit(self: *UT, ctx: anytype) void {
         var i = self.player_actions.len;
         while (i > 0) {
             i -= 1;
@@ -1349,21 +1362,21 @@ pub const PlayerInfoUpdate = struct {
                 j -= 1;
                 const pair = action_specs[j];
                 if (@field(self.player_actions[i], pair[0])) |*item| {
-                    pair[1].deinit(@constCast(item), a);
+                    pair[1].deinit(@constCast(item), ctx);
                 }
             }
         }
-        a.free(self.player_actions);
+        ctx.allocator.free(self.player_actions);
         self.* = undefined;
     }
-    pub fn size(self: UT) usize {
-        var total = ActionsSpec.size(self.actions) +
-            VarI32.size(@intCast(self.player_actions.len));
+    pub fn size(self: UT, ctx: anytype) usize {
+        var total = ActionsSpec.size(self.actions, ctx) +
+            VarI32.size(@intCast(self.player_actions.len), ctx);
         for (self.player_actions) |player_action| {
-            total += Uuid.size(player_action.uuid);
+            total += Uuid.size(player_action.uuid, ctx);
             inline for (action_specs) |pair| {
                 if (@field(player_action, pair[0])) |action_field| {
-                    total += pair[1].size(action_field);
+                    total += pair[1].size(action_field, ctx);
                 }
             }
         }
@@ -1931,32 +1944,33 @@ pub const P = struct {
             message_id: @typeInfo(IdSpec.UT).Optional.child,
             signature: SignatureSpec.UT,
 
-            pub fn write(writer: anytype, in: UT) !void {
+            pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
                 switch (in) {
-                    .message_id => |id| try IdSpec.write(writer, id),
+                    .message_id => |id| try IdSpec.write(writer, id, ctx),
                     .signature => |sig| {
-                        try VarI32.write(writer, 0);
-                        try SignatureSpec.write(writer, sig);
+                        try VarI32.write(writer, 0, ctx);
+                        try SignatureSpec.write(writer, sig, ctx);
                     },
                 }
             }
-            pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+            pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
                 var id_: IdSpec.UT = undefined;
-                try IdSpec.read(reader, &id_, a);
+                try IdSpec.read(reader, &id_, ctx);
                 if (id_) |id| {
                     out.* = .{ .message_id = id };
                 } else {
                     out.* = .{ .signature = undefined };
-                    try SignatureSpec.read(reader, &out.signature, a);
+                    try SignatureSpec.read(reader, &out.signature, ctx);
                 }
             }
-            pub fn deinit(self: *UT, _: Allocator) void {
+            pub fn deinit(self: *UT, _: anytype) void {
                 self.* = undefined;
             }
-            pub fn size(self: UT) usize {
+            pub fn size(self: UT, ctx: anytype) usize {
                 return switch (self) {
-                    .message_id => |id| IdSpec.size(id),
-                    .signature => |sig| VarI32.size(0) + SignatureSpec.size(sig),
+                    .message_id => |id| IdSpec.size(id, ctx),
+                    .signature => |sig| VarI32.size(0, ctx) +
+                        SignatureSpec.size(sig, ctx),
                 };
             }
         },
@@ -2237,17 +2251,17 @@ pub const P = struct {
                 rest: RestSpec.UT,
                 pub const UT = ?@This();
                 pub const E = RestSpec.E || error{EndOfStream};
-                pub fn write(writer: anytype, in_: UT) !void {
+                pub fn write(writer: anytype, in_: UT, ctx: anytype) !void {
                     if (in_) |in| {
-                        try serde.Num(u8, .big).write(writer, in.columns);
-                        try RestSpec.write(writer, in.rest);
+                        try serde.Num(u8, .big).write(writer, in.columns, ctx);
+                        try RestSpec.write(writer, in.rest, ctx);
                     } else {
-                        try serde.Num(u8, .big).write(writer, 0);
+                        try serde.Num(u8, .big).write(writer, 0, ctx);
                     }
                 }
-                pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+                pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
                     var columns: u8 = undefined;
-                    try serde.Num(u8, .big).read(reader, &columns, undefined);
+                    try serde.Num(u8, .big).read(reader, &columns, ctx);
                     if (columns == 0) {
                         out.* = null;
                     } else {
@@ -2255,15 +2269,15 @@ pub const P = struct {
                             .columns = columns,
                             .rest = undefined,
                         };
-                        try RestSpec.read(reader, &out.*.?.rest, a);
+                        try RestSpec.read(reader, &out.*.?.rest, ctx);
                     }
                 }
-                pub fn deinit(self_: *UT, a: Allocator) void {
-                    if (self_.*) |*self| RestSpec.deinit(&self.rest, a);
+                pub fn deinit(self_: *UT, ctx: anytype) void {
+                    if (self_.*) |*self| RestSpec.deinit(&self.rest, ctx);
                     self_.* = undefined;
                 }
-                pub fn size(self_: UT) usize {
-                    return 1 + if (self_) |self| RestSpec.size(self.rest) else 0;
+                pub fn size(self_: UT, ctx: anytype) usize {
+                    return 1 + if (self_) |self| RestSpec.size(self.rest, ctx) else 0;
                 }
             },
         },
@@ -2707,21 +2721,21 @@ pub const P = struct {
                 };
                 pub const UT = []UTEntry;
                 pub const E = EntrySpec.E || error{EndOfStream};
-                pub fn write(writer: anytype, in: UT) !void {
+                pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
                     for (in) |entry| {
                         try writer.writeByte(entry.id);
-                        try EntrySpec.write(writer, entry.data);
+                        try EntrySpec.write(writer, entry.data, ctx);
                     }
                     try writer.writeByte(0xFF);
                 }
-                pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+                pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
                     var len: u8 = 0;
                     var entries = [_]?EntrySpec.UT{null} ** 255;
                     errdefer {
                         var i = entries.len;
                         while (i > 0) {
                             i -= 1;
-                            if (entries[i]) |*entry| EntrySpec.deinit(entry, a);
+                            if (entries[i]) |*entry| EntrySpec.deinit(entry, ctx);
                         }
                     }
 
@@ -2729,14 +2743,14 @@ pub const P = struct {
                         const index: u8 = try reader.readByte();
                         if (index == 0xFF) break;
                         if (entries[index]) |*existing_entry| {
-                            EntrySpec.deinit(existing_entry, a);
+                            EntrySpec.deinit(existing_entry, ctx);
                         } else {
                             len += 1;
                         }
                         entries[index] = @as(EntrySpec.UT, undefined);
-                        try EntrySpec.read(reader, &entries[index].?, a);
+                        try EntrySpec.read(reader, &entries[index].?, ctx);
                     }
-                    out.* = try a.alloc(UTEntry, len);
+                    out.* = try ctx.allocator.alloc(UTEntry, len);
                     var i: u8 = 0;
                     for (entries, 0..) |entry_, id| if (entry_) |entry| {
                         out.*[i] = .{
@@ -2746,18 +2760,18 @@ pub const P = struct {
                         i += 1;
                     };
                 }
-                pub fn deinit(self: *UT, a: Allocator) void {
+                pub fn deinit(self: *UT, ctx: anytype) void {
                     var i = self.len;
                     while (i > 0) {
                         i -= 1;
-                        EntrySpec.deinit(&self.*[i].data, a);
+                        EntrySpec.deinit(&self.*[i].data, ctx);
                     }
-                    a.free(self.*);
+                    ctx.allocator.free(self.*);
                     self.* = undefined;
                 }
-                pub fn size(self: UT) usize {
+                pub fn size(self: UT, ctx: anytype) usize {
                     var total: usize = 1;
-                    for (self) |entry| total += 1 + EntrySpec.size(entry.data);
+                    for (self) |entry| total += 1 + EntrySpec.size(entry.data, ctx);
                     return total;
                 }
             },
@@ -2792,49 +2806,49 @@ pub const P = struct {
                 };
                 pub const UT = []Entry;
                 pub const E = EquipmentSlotSentinelSpec.E || Slot.E;
-                pub fn write(writer: anytype, in: UT) !void {
+                pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
                     for (in, 0..) |entry, i| {
                         try EquipmentSlotSentinelSpec.write(writer, .{
                             .slot = entry.slot,
                             .has_another_entry = i == in.len - 1,
-                        });
-                        try Slot.write(writer, entry.item);
+                        }, ctx);
+                        try Slot.write(writer, entry.item, ctx);
                     }
                 }
-                pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
-                    var entries = std.ArrayList(Entry).init(a);
+                pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
+                    var entries = std.ArrayList(Entry).init(ctx.allocator);
                     defer {
                         var i = entries.items.len;
                         while (i > 0) {
                             i -= 1;
-                            Slot.deinit(&entries.items[i].item, a);
+                            Slot.deinit(&entries.items[i].item, ctx);
                         }
                         entries.deinit();
                     }
                     while (true) {
                         var b: EquipmentSlotSentinelSpec.UT = undefined;
-                        try EquipmentSlotSentinelSpec.read(reader, &b, undefined);
+                        try EquipmentSlotSentinelSpec.read(reader, &b, ctx);
                         var entry = try entries.addOne();
                         errdefer entries.items.len -= 1;
-                        try Slot.read(reader, &entry.item, a);
-                        errdefer Slot.deinit(&entry.item, a);
+                        try Slot.read(reader, &entry.item, ctx);
+                        errdefer Slot.deinit(&entry.item, ctx);
                         entry.slot = b.slot;
                         if (!b.has_another_entry) break;
                     }
                     out.* = try entries.toOwnedSlice();
                 }
-                pub fn deinit(self: *UT, a: Allocator) void {
+                pub fn deinit(self: *UT, ctx: anytype) void {
                     var i = self.len;
                     while (i > 0) {
                         i -= 1;
-                        Slot.deinit(&self.*[i].item, a);
+                        Slot.deinit(&self.*[i].item, ctx);
                     }
-                    a.free(self.*);
+                    ctx.allocator.free(self.*);
                     self.* = undefined;
                 }
-                pub fn size(self: UT) usize {
+                pub fn size(self: UT, ctx: anytype) usize {
                     var total: usize = 0;
-                    for (self) |entry| total += 1 + Slot.size(entry.item);
+                    for (self) |entry| total += 1 + Slot.size(entry.item, ctx);
                     return total;
                 }
             },
@@ -2993,39 +3007,39 @@ pub const P = struct {
                 sound: ?Identifier.UT,
             };
             pub const E = SoundCategory.E || Identifier.E;
-            pub fn write(writer: anytype, in: UT) !void {
+            pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
                 try FlagsSpec.write(writer, .{
                     .has_source = in.source != null,
                     .has_sound = in.sound != null,
-                });
-                if (in.source) |v| try SoundCategory.write(writer, v);
-                if (in.sound) |v| try Identifier.write(writer, v);
+                }, ctx);
+                if (in.source) |v| try SoundCategory.write(writer, v, ctx);
+                if (in.sound) |v| try Identifier.write(writer, v, ctx);
             }
-            pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
+            pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
                 var bits: FlagsSpec.UT = undefined;
-                try FlagsSpec.read(reader, &bits, undefined);
+                try FlagsSpec.read(reader, &bits, ctx);
                 if (bits.has_source) {
                     out.source = @as(SoundCategory.UT, undefined);
-                    try SoundCategory.read(reader, &out.source.?, undefined);
+                    try SoundCategory.read(reader, &out.source.?, ctx);
                 } else {
                     out.source = null;
                 }
                 if (bits.has_sound) {
                     out.sound = @as(Identifier.UT, undefined);
-                    try Identifier.read(reader, &out.sound.?, a);
+                    try Identifier.read(reader, &out.sound.?, ctx);
                 } else {
                     out.sound = null;
                 }
             }
-            pub fn deinit(self: *UT, a: Allocator) void {
-                if (self.sound) |*v| Identifier.deinit(v, a);
-                if (self.source) |*v| SoundCategory.deinit(v, a);
+            pub fn deinit(self: *UT, ctx: anytype) void {
+                if (self.sound) |*v| Identifier.deinit(v, ctx);
+                if (self.source) |*v| SoundCategory.deinit(v, ctx);
                 self.* = undefined;
             }
-            pub fn size(self: UT) usize {
+            pub fn size(self: UT, ctx: anytype) usize {
                 return 1 +
-                    (if (self.source) |v| SoundCategory.size(v) else 0) +
-                    (if (self.sound) |v| Identifier.size(v) else 0);
+                    (if (self.source) |v| SoundCategory.size(v, ctx) else 0) +
+                    (if (self.sound) |v| Identifier.size(v, ctx) else 0);
             }
         },
         system_chat_message: struct {
@@ -3163,66 +3177,69 @@ pub const P = struct {
                     pub const E = LenSpec.E || PString(32767).E || RecipeCategory.E ||
                         Ingredients.E || serde.Bool.E || Slot.E;
 
-                    pub fn write(writer: anytype, in: UT) !void {
-                        try Group.write(writer, in.group);
-                        try RecipeCategory.write(writer, in.category);
-                        try LenSpec.write(writer, in.width);
-                        try LenSpec.write(writer, in.height);
-                        for (in.ingredients) |item| try Ingredient.write(writer, item);
-                        try Slot.write(writer, in.result);
-                        try serde.Bool.write(writer, in.show_notification);
+                    pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+                        try Group.write(writer, in.group, ctx);
+                        try RecipeCategory.write(writer, in.category, ctx);
+                        try LenSpec.write(writer, in.width, ctx);
+                        try LenSpec.write(writer, in.height, ctx);
+                        for (in.ingredients) |item|
+                            try Ingredient.write(writer, item, ctx);
+                        try Slot.write(writer, in.result, ctx);
+                        try serde.Bool.write(writer, in.show_notification, ctx);
                     }
-                    pub fn read(reader: anytype, out: *UT, a: Allocator) !void {
-                        try Group.read(reader, &out.group, a);
-                        errdefer Group.deinit(&out.group, a);
-                        try RecipeCategory.read(reader, &out.category, undefined);
-                        try LenSpec.read(reader, &out.width, undefined);
-                        try LenSpec.read(reader, &out.height, undefined);
+                    pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
+                        try Group.read(reader, &out.group, ctx);
+                        errdefer Group.deinit(&out.group, ctx);
+                        try RecipeCategory.read(reader, &out.category, ctx);
+                        try LenSpec.read(reader, &out.width, ctx);
+                        try LenSpec.read(reader, &out.height, ctx);
 
-                        const ingr = try a.alloc(Ingredient.UT, out.width * out.height);
-                        errdefer a.free(ingr);
+                        const ingr = try ctx.allocator
+                            .alloc(Ingredient.UT, out.width * out.height);
+                        errdefer ctx.allocator.free(ingr);
                         for (ingr, 0..) |*item, i| {
                             errdefer {
                                 var j = i;
                                 while (j > 0) {
                                     j -= 1;
-                                    Ingredient.deinit(&ingr[j], a);
+                                    Ingredient.deinit(&ingr[j], ctx);
                                 }
                             }
-                            try Ingredient.read(reader, item, a);
+                            try Ingredient.read(reader, item, ctx);
                         }
                         errdefer {
                             var i = ingr.len;
                             while (i > 0) {
                                 i -= 1;
-                                Ingredient.deinit(&ingr[i], a);
+                                Ingredient.deinit(&ingr[i], ctx);
                             }
                         }
                         out.ingredients = ingr;
 
-                        try Slot.read(reader, &out.result, a);
-                        errdefer Slot.deinit(&out.result, a);
-                        try serde.Bool.read(reader, &out.show_notification, undefined);
+                        try Slot.read(reader, &out.result, ctx);
+                        errdefer Slot.deinit(&out.result, ctx);
+                        try serde.Bool.read(reader, &out.show_notification, ctx);
                     }
-                    pub fn deinit(self: *UT, a: Allocator) void {
-                        Slot.deinit(&self.result, a);
+                    pub fn deinit(self: *UT, ctx: anytype) void {
+                        Slot.deinit(&self.result, ctx);
                         var i = self.ingredients.len;
                         while (i > 0) {
                             i -= 1;
-                            Ingredient.deinit(@constCast(&self.ingredients[i]), a);
+                            Ingredient.deinit(@constCast(&self.ingredients[i]), ctx);
                         }
-                        a.free(self.ingredients);
-                        Group.deinit(&self.group, a);
+                        ctx.allocator.free(self.ingredients);
+                        Group.deinit(&self.group, ctx);
                         self.* = undefined;
                     }
-                    pub fn size(self: UT) usize {
-                        var total = LenSpec.size(self.width) +
-                            LenSpec.size(self.height) +
-                            Group.size(self.group) +
-                            RecipeCategory.size(self.category);
-                        for (self.ingredients) |item| total += Ingredient.size(item);
-                        return total + Slot.size(self.result) +
-                            serde.Bool.size(self.show_notification);
+                    pub fn size(self: UT, ctx: anytype) usize {
+                        var total = LenSpec.size(self.width, ctx) +
+                            LenSpec.size(self.height, ctx) +
+                            Group.size(self.group, ctx) +
+                            RecipeCategory.size(self.category, ctx);
+                        for (self.ingredients) |item|
+                            total += Ingredient.size(item, ctx);
+                        return total + Slot.size(self.result, ctx) +
+                            serde.Bool.size(self.show_notification, ctx);
                     }
                 },
                 crafting_special_armordye: RecipeCategory,

@@ -100,8 +100,9 @@ pub fn handleServerbound(
     defer stdout_b.flush() catch {};
 
     // -- receive client handshake
-    var handshake_packet = try mcio.readHandshakePacket(mcv.H.SB, cr, a);
-    defer mcv.H.SB.deinit(&handshake_packet, a);
+    var handshake_packet =
+        try mcio.readHandshakePacket(mcv.H.SB, cr, .{ .allocator = a });
+    defer mcv.H.SB.deinit(&handshake_packet, .{ .allocator = a });
     if (handshake_packet == .legacy) return;
 
     // -- connect to server
@@ -114,7 +115,7 @@ pub fn handleServerbound(
     const sw = sbw.writer();
 
     // -- pass along handshake to server
-    try mcio.writePacket(mcv.H.SB, sw, handshake_packet);
+    try mcio.writePacket(mcv.H.SB, sw, handshake_packet, .{});
 
     // -- switch state
     current_state = switch (handshake_packet.handshake.next_state) {
@@ -187,11 +188,11 @@ pub fn handleServerbound(
                     }
                 }
 
-                var packet = frame.parse(ST, aa) catch |e| {
+                var packet = frame.parse(ST, .{ .allocator = aa }) catch |e| {
                     try stdout.print("parse error: \"{s}\"\n", .{@errorName(e)});
                     continue;
                 };
-                defer ST.deinit(&packet, aa);
+                defer ST.deinit(&packet, .{ .allocator = aa });
 
                 if (options.show_packet_contents) {
                     try mcp.debugPrint(stdout, packet, 0);
@@ -306,11 +307,11 @@ pub fn handleClientbound(
                     }
                 }
 
-                var packet = frame.parse(ST, aa) catch |e| {
+                var packet = frame.parse(ST, .{ .allocator = aa }) catch |e| {
                     try stdout.print("parse error: \"{s}\"\n", .{@errorName(e)});
                     continue;
                 };
-                defer ST.deinit(&packet, aa);
+                defer ST.deinit(&packet, .{ .allocator = aa });
 
                 if (options.show_packet_contents) {
                     try mcp.debugPrint(stdout, packet, 0);

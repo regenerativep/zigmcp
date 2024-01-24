@@ -163,7 +163,7 @@ pub const LightLevels = struct {
     sky: [TOTAL_CHUNK_SECTIONS + 2]Section =
         [_]Section{.{ .single = 0xF }} ** (TOTAL_CHUNK_SECTIONS + 2),
 
-    pub fn write(writer: anytype, in: UT) !void {
+    pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
 
         // sky light mask
         var mask = BitSet.initEmpty(in.sky.len);
@@ -173,7 +173,7 @@ pub const LightLevels = struct {
                 mask.set(i);
                 sky_light_count += 1;
             };
-        try BitSet.write(writer, mask);
+        try BitSet.write(writer, mask, ctx);
 
         // block light mask
         mask = BitSet.initEmpty(in.block.len);
@@ -183,72 +183,72 @@ pub const LightLevels = struct {
                 mask.set(i);
                 block_light_count += 1;
             };
-        try BitSet.write(writer, mask);
+        try BitSet.write(writer, mask, ctx);
 
         // empty sky light mask
         mask = BitSet.initEmpty(in.sky.len);
         for (&in.sky, 0..) |section, i|
             if (section == .single and section.single == 0x0)
                 mask.set(i);
-        try BitSet.write(writer, mask);
+        try BitSet.write(writer, mask, ctx);
 
         // empty block light mask
         mask = BitSet.initEmpty(in.block.len);
         for (&in.block, 0..) |section, i|
             if (section == .single and section.single == 0x0)
                 mask.set(i);
-        try BitSet.write(writer, mask);
+        try BitSet.write(writer, mask, ctx);
 
         // sky light array
-        try VarI32.write(writer, sky_light_count);
+        try VarI32.write(writer, sky_light_count, ctx);
         for (&in.sky) |section| switch (section) {
             .single => |d| if (d != 0x0) {
-                try LenSpec.write(writer, undefined);
+                try LenSpec.write(writer, undefined, ctx);
                 try writer.writeByteNTimes(@as(u8, d) * 17, 2048);
             },
             .direct => |d| {
-                try LenSpec.write(writer, undefined);
+                try LenSpec.write(writer, undefined, ctx);
                 try writer.writeAll(&d);
             },
         };
 
         // block light array
-        try VarI32.write(writer, block_light_count);
+        try VarI32.write(writer, block_light_count, ctx);
         for (&in.block) |section| switch (section) {
             .single => |d| if (d != 0x0) {
-                try LenSpec.write(writer, undefined);
+                try LenSpec.write(writer, undefined, ctx);
                 try writer.writeByteNTimes(@as(u8, d) * 17, 2048);
             },
             .direct => |d| {
-                try LenSpec.write(writer, undefined);
+                try LenSpec.write(writer, undefined, ctx);
                 try writer.writeAll(&d);
             },
         };
     }
-    pub fn read(reader: anytype, out: *UT, _: Allocator) !void {
+    pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
         // sky light mask
         var sky_bits: BitSet = undefined;
-        try BitSet.read(reader, &sky_bits, undefined);
+        try BitSet.read(reader, &sky_bits, ctx);
 
         // block light mask
         var block_bits: BitSet = undefined;
-        try BitSet.read(reader, &block_bits, undefined);
+        try BitSet.read(reader, &block_bits, ctx);
 
         // empty sky light mask
         var empty_sky_bits: BitSet = undefined;
-        try BitSet.read(reader, &empty_sky_bits, undefined);
+        try BitSet.read(reader, &empty_sky_bits, ctx);
 
         // empty sky light mask
         var empty_block_bits: BitSet = undefined;
-        try BitSet.read(reader, &empty_block_bits, undefined);
+        try BitSet.read(reader, &empty_block_bits, ctx);
 
         for (&out.sky) |*section| section.* = .{ .single = 0x0 };
         for (&out.block) |*section| section.* = .{ .single = 0x0 };
 
         var len: usize = undefined;
-        try ArrayLenSpec.read(reader, &len, undefined);
+        try ArrayLenSpec.read(reader, &len, ctx);
         for (&out.sky, 0..) |*section, i| if (sky_bits.get(i)) {
-            try LenSpec.read(reader, undefined, undefined);
+            try LenSpec.read(reader, undefined, ctx);
             section.* = .{ .direct = undefined };
             try reader.readNoEof(&section.direct);
             const val = @as(u8, @as(u4, @truncate(section.direct[0]))) * 17;
@@ -256,9 +256,9 @@ pub const LightLevels = struct {
                 section.* = .{ .single = @truncate(section.direct[0]) };
         };
 
-        try ArrayLenSpec.read(reader, &len, undefined);
+        try ArrayLenSpec.read(reader, &len, ctx);
         for (&out.block, 0..) |*section, i| if (block_bits.get(i)) {
-            try LenSpec.read(reader, undefined, undefined);
+            try LenSpec.read(reader, undefined, ctx);
             section.* = .{ .direct = undefined };
             try reader.readNoEof(&section.direct);
             const val = @as(u8, @as(u4, @truncate(section.direct[0]))) * 17;
@@ -266,7 +266,7 @@ pub const LightLevels = struct {
                 section.* = .{ .single = @truncate(section.direct[0]) };
         };
     }
-    pub fn size(self: UT) usize {
+    pub fn size(self: UT, ctx: anytype) usize {
         var sky_sections: usize = 0;
         for (&self.sky) |section| {
             if (section != .single or section.single != 0x0) sky_sections += 1;
@@ -275,13 +275,14 @@ pub const LightLevels = struct {
         for (&self.block) |section| {
             if (section != .single or section.single != 0x0) block_sections += 1;
         }
-        return (BitSet.initEmpty(self.sky.len).size() * 2) +
-            (BitSet.initEmpty(self.block.len).size() * 2) +
-            ArrayLenSpec.size(sky_sections) + ArrayLenSpec.size(block_sections) +
-            (sky_sections * (LenSpec.size(undefined) + 2048)) +
-            (block_sections * (LenSpec.size(undefined) + 2048));
+        return (BitSet.initEmpty(self.sky.len).size(ctx) * 2) +
+            (BitSet.initEmpty(self.block.len).size(ctx) * 2) +
+            ArrayLenSpec.size(sky_sections, ctx) +
+            ArrayLenSpec.size(block_sections, ctx) +
+            (sky_sections * (LenSpec.size(undefined, ctx) + 2048)) +
+            (block_sections * (LenSpec.size(undefined, ctx) + 2048));
     }
-    pub fn deinit(self: *UT, _: Allocator) void {
+    pub fn deinit(self: *UT, _: anytype) void {
         self.* = undefined;
     }
 };
@@ -432,25 +433,25 @@ pub const HeightMap = struct {
     pub const UT = @This();
     pub const E = ListSpec.E;
 
-    pub fn write(writer: anytype, in: UT) !void {
-        try ListSpec.write(writer, in.inner.constLongSlice());
+    pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+        try ListSpec.write(writer, in.inner.constLongSlice(), ctx);
     }
-    pub fn read(reader: anytype, out: *UT, _: Allocator) !void {
+    pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
         var len: InnerLengthSpec.UT = undefined;
-        try InnerLengthSpec.read(reader, &len, undefined);
+        try InnerLengthSpec.read(reader, &len, ctx);
         var slice_: []const InnerListSpec.ElemSpec.UT = undefined;
         try InnerListSpec.readWithBuffer(
             reader,
             &slice_,
             out.inner.data[0..len],
-            undefined,
+            ctx,
         );
         out.inner.bits = BITS_PER_VALUE;
     }
-    pub fn size(self: UT) usize {
-        return ListSpec.size(self.inner.constLongSlice());
+    pub fn size(self: UT, ctx: anytype) usize {
+        return ListSpec.size(self.inner.constLongSlice(), ctx);
     }
-    pub fn deinit(self: *UT, _: Allocator) void {
+    pub fn deinit(self: *UT, _: anytype) void {
         self.* = undefined;
     }
 
@@ -770,93 +771,89 @@ pub fn PalettedContainer(comptime kind: enum { block, biome }) type {
             };
         }
 
-        pub fn write(writer: anytype, in: UT) !void {
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
             switch (in) {
                 .single => |id| {
                     try writer.writeByte(0);
-                    try VarI32.write(writer, @intCast(id));
-                    try VarI32.write(writer, 0);
+                    try VarI32.write(writer, @intCast(id), ctx);
+                    try VarI32.write(writer, 0, ctx);
                 },
                 .indirect => |d| {
                     try writer.writeByte(d.data.bits);
-                    try VarI32.write(writer, @intCast(d.palette.len));
+                    try VarI32.write(writer, @intCast(d.palette.len), ctx);
                     for (d.palette.slice()) |item|
-                        try VarI32.write(writer, @intCast(item));
+                        try VarI32.write(writer, @intCast(item), ctx);
                     const longs = d.data.constLongSlice();
-                    try VarI32.write(writer, @intCast(longs.len));
-                    for (longs) |item| try serde.Num(u64, .big).write(writer, item);
+                    try VarI32.write(writer, @intCast(longs.len), ctx);
+                    for (longs) |item|
+                        try serde.Num(u64, .big).write(writer, item, ctx);
                 },
                 .direct => |d| {
                     try writer.writeByte(d.bits);
                     const longs = d.constLongSlice();
-                    try VarI32.write(writer, @intCast(longs.len));
-                    for (longs) |item| try serde.Num(u64, .big).write(writer, item);
+                    try VarI32.write(writer, @intCast(longs.len), ctx);
+                    for (longs) |item|
+                        try serde.Num(u64, .big).write(writer, item, ctx);
                 },
             }
         }
 
-        pub fn read(reader: anytype, out: *UT, _: Allocator) !void {
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
             var bits: u8 = undefined;
-            try serde.Num(u8, .big).read(reader, &bits, undefined);
+            try serde.Num(u8, .big).read(reader, &bits, ctx);
             switch (bits) {
                 0 => {
                     out.* = .{ .single = undefined };
-                    try serde.Casted(VarI32, Id).read(reader, &out.single, undefined);
-                    try serde.Constant(VarI32, 0, null).read(reader, undefined, undefined);
+                    try serde.Casted(VarI32, Id).read(reader, &out.single, ctx);
+                    try serde.Constant(VarI32, 0, null).read(reader, undefined, ctx);
                 },
                 1...MaxIndirectBits => {
                     out.* = .{ .indirect = .{
                         .palette = .{},
                         .data = IndirectData.init(@intCast(bits)),
                     } };
-                    try serde.Casted(VarI32, IndirectPaletteLen).read(
-                        reader,
-                        &out.indirect.palette.len,
-                        undefined,
-                    );
+                    try serde.Casted(VarI32, IndirectPaletteLen)
+                        .read(reader, &out.indirect.palette.len, ctx);
                     for (out.indirect.palette.slice()) |*item|
-                        try serde.Casted(VarI32, Id).read(reader, item, undefined);
+                        try serde.Casted(VarI32, Id).read(reader, item, ctx);
 
                     var read_long_len: u32 = undefined;
-                    try serde.Casted(VarI32, u32).read(
-                        reader,
-                        &read_long_len,
-                        undefined,
-                    );
+                    try serde.Casted(VarI32, u32).read(reader, &read_long_len, ctx);
                     for (out.indirect.data.longSlice()) |*item|
-                        try serde.Num(u64, .big).read(reader, item, undefined);
+                        try serde.Num(u64, .big).read(reader, item, ctx);
                 },
                 MaxIndirectBits + 1...MaxDirectBits => {
                     var read_long_len: u32 = undefined;
-                    try serde.Casted(VarI32, u32).read(reader, &read_long_len, undefined);
+                    try serde.Casted(VarI32, u32).read(reader, &read_long_len, ctx);
                     out.* = .{ .direct = DirectData.init(@intCast(bits)) };
                     for (out.direct.longSlice()) |*item|
-                        try serde.Num(u64, .big).read(reader, item, undefined);
+                        try serde.Num(u64, .big).read(reader, item, ctx);
                 },
                 else => return error.InvalidBits,
             }
         }
-        pub fn deinit(self: *UT, _: Allocator) void {
+        pub fn deinit(self: *UT, _: anytype) void {
             self.* = undefined;
         }
-        pub fn size(self: UT) usize {
+        pub fn size(self: UT, ctx: anytype) usize {
             switch (self) {
-                .single => |id| return 1 + VarI32.size(@intCast(id)) + VarI32.size(0),
+                .single => |id| return 1 +
+                    VarI32.size(@intCast(id), ctx) + VarI32.size(0, ctx),
                 .indirect => |d| {
                     const longs = d.data.constLongSlice();
                     var total =
-                        1 + VarI32.size(@intCast(d.palette.len)) +
-                        VarI32.size(@intCast(longs.len));
+                        1 + VarI32.size(@intCast(d.palette.len), ctx) +
+                        VarI32.size(@intCast(longs.len), ctx);
                     for (d.palette.slice()) |item|
-                        total += VarI32.size(@intCast(item));
+                        total += VarI32.size(@intCast(item), ctx);
                     for (longs) |item|
-                        total += serde.Num(u64, .big).size(item);
+                        total += serde.Num(u64, .big).size(item, ctx);
                     return total;
                 },
                 .direct => |d| {
                     const longs = d.constLongSlice();
-                    var total = 1 + VarI32.size(@intCast(longs.len));
-                    for (longs) |item| total += serde.Num(u64, .big).size(item);
+                    var total = 1 + VarI32.size(@intCast(longs.len), ctx);
+                    for (longs) |item| total += serde.Num(u64, .big).size(item, ctx);
                     return total;
                 },
             }

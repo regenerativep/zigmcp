@@ -26,18 +26,18 @@ pub fn BitSet(comptime capacity: comptime_int) type {
         buffer: [MaxLongs]u64 = .{0} ** MaxLongs,
         len: Length = 0,
 
-        pub fn write(writer: anytype, in: UT) !void {
-            try LengthSpec.write(writer, in.len);
+        pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
+            try LengthSpec.write(writer, in.len, ctx);
             for (in.buffer[0..in.len]) |d| try writer.writeInt(u64, d, .big);
         }
-        pub fn read(reader: anytype, out: *UT, _: Allocator) !void {
-            try LengthSpec.read(reader, &out.len, undefined);
+        pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
+            try LengthSpec.read(reader, &out.len, ctx);
             for (out.buffer[0..out.len]) |*d| d.* = try reader.readInt(u64, .big);
         }
-        pub fn size(self: UT) usize {
-            return LengthSpec.size(self.len) + (@sizeOf(u64) * @as(usize, self.len));
+        pub fn size(self: UT, ctx: anytype) usize {
+            return LengthSpec.size(self.len, ctx) + (@sizeOf(u64) * @as(usize, self.len));
         }
-        pub fn deinit(self: *UT, _: Allocator) void {
+        pub fn deinit(self: *UT, _: anytype) void {
             self.* = undefined;
         }
 
@@ -87,16 +87,16 @@ pub fn PString(comptime max_len_opt: ?comptime_int) type {
 pub const Uuid = struct {
     pub const UT = UuidMod;
     pub const E = error{EndOfStream};
-    pub fn write(writer: anytype, in: UT) !void {
+    pub fn write(writer: anytype, in: UT, _: anytype) !void {
         try writer.writeAll(&in.bytes);
     }
-    pub fn read(reader: anytype, out: *UT, _: Allocator) !void {
+    pub fn read(reader: anytype, out: *UT, _: anytype) !void {
         try reader.readNoEof(&out.bytes);
     }
-    pub fn deinit(self: *UT, _: Allocator) void {
+    pub fn deinit(self: *UT, _: anytype) void {
         self.* = undefined;
     }
-    pub fn size(self: UT) usize {
+    pub fn size(self: UT, _: anytype) usize {
         return self.bytes.len;
     }
     // stolen from https://github.com/regenerativep/zig-mc-server/blob/d82dc727311fd10d2e404ebb4715336637dcca97/src/mcproto.zig#L137

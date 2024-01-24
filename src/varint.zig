@@ -12,7 +12,7 @@ pub fn VarInt(comptime I: type) type {
         pub const E = error{ EndOfStream, VarIntTooBig };
         pub const UT = I;
 
-        pub fn read(reader: anytype, out: *I, _: std.mem.Allocator) !void {
+        pub fn read(reader: anytype, out: *I, _: anytype) !void {
             var n: U = 0;
             for (0..MaxBytes) |i| {
                 const b = try reader.readByte();
@@ -24,10 +24,10 @@ pub fn VarInt(comptime I: type) type {
             }
             out.* = @bitCast(n);
         }
-        pub fn deinit(self: *I, _: std.mem.Allocator) void {
+        pub fn deinit(self: *I, _: anytype) void {
             self.* = undefined;
         }
-        pub fn write(writer: anytype, in: I) !void {
+        pub fn write(writer: anytype, in: I, _: anytype) !void {
             var n: U = @bitCast(in);
             while (true) {
                 const b: u8 = @as(u7, @truncate(n));
@@ -44,7 +44,7 @@ pub fn VarInt(comptime I: type) type {
             }
         }
 
-        pub fn size(in: I) usize {
+        pub fn size(in: I, _: anytype) usize {
             return if (in == 0)
                 1
             else
@@ -104,7 +104,7 @@ test "VarInt read" {
         const buf: [pair.v.len]u8 = pair.v;
         var reader = std.io.fixedBufferStream(&buf);
         var out: pair.T = undefined;
-        try VarInt(pair.T).read(reader.reader(), &out, undefined);
+        try VarInt(pair.T).read(reader.reader(), &out, .{});
         try testing.expectEqual(@as(pair.T, pair.r), out);
     }
 }
@@ -113,7 +113,7 @@ test "VarInt write" {
     inline for (VarIntTestCases) |pair| {
         var wrote = std.ArrayList(u8).init(testing.allocator);
         defer wrote.deinit();
-        try VarInt(pair.T).write(wrote.writer(), pair.r);
+        try VarInt(pair.T).write(wrote.writer(), pair.r, .{});
         const buf: [pair.v.len]u8 = pair.v;
         try testing.expect(std.mem.eql(u8, &buf, wrote.items));
     }
@@ -123,7 +123,7 @@ test "VarInt size" {
     inline for (VarIntTestCases) |pair| {
         try testing.expectEqual(
             @as(usize, pair.v.len),
-            VarInt(pair.T).size(pair.r),
+            VarInt(pair.T).size(pair.r, .{}),
         );
     }
 }
