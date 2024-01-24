@@ -7,10 +7,12 @@ const testing = std.testing;
 
 const serde = @import("serde.zig");
 
-const BitSet = @import("mcserde.zig").BitSet(TOTAL_CHUNK_SECTIONS + 2);
+const BitSet = @import("mcserde.zig").BitSet(TOTAL_SECTIONS_MAXIMUM + 2);
 
 const VarI32 = @import("varint.zig").VarInt(i32);
 const nbt = @import("nbt.zig");
+
+const mcv = @import("main.zig").vlatest;
 
 const generated = @import("mcp-generated");
 pub const Block = generated.Block;
@@ -19,23 +21,32 @@ pub const Biome = generated.Biome;
 
 const MaxNbtDepth = @import("main.zig").MaxNbtDepth;
 
-// TODO: these should not be compile-time known. dont hardcode them.
-//     https://minecraft.fandom.com/wiki/Custom#JSON_format
-//     Actual range for MIN_Y is [-2032, 2016], HEIGHT is [16, 4064]
-//     (is that mention about max build height another limit to be concerned about or
-//     is that only the combination of the MIN_Y and HEIGHT?)
-pub const MIN_Y = -64;
-pub const HEIGHT = 384;
-pub const MAX_Y = MIN_Y + HEIGHT;
-pub const TOTAL_CHUNK_SECTIONS = HEIGHT / 16;
+// https://minecraft.fandom.com/wiki/Custom#JSON_format
+//     Range for MIN_Y is [-2032, 2016], HEIGHT is [16, 4064]
+//     MIN_Y and HEIGHT must be a multiple of 16
+// TODO: is that mention about max build height another limit to be concerned about or
+//     is that only the combination of the MIN_Y and HEIGHT?
+pub const MIN_Y_MINIMUM = -2032;
+pub const MIN_Y_MAXIMUM = 2016;
+pub const HEIGHT_MINIMUM = 16;
+pub const HEIGHT_MAXIMUM = 4064;
+pub const MAX_Y_MINIMUM = MIN_Y_MINIMUM + HEIGHT_MINIMUM;
+pub const MAX_Y_MAXIMUM = MIN_Y_MAXIMUM + HEIGHT_MAXIMUM;
 
-pub const MIN_BIOME_Y = MIN_Y >> 2;
-pub const MAX_BIOME_Y = MAX_Y >> 2;
+pub const TOTAL_SECTIONS_MINIMUM = @divExact(HEIGHT_MINIMUM, 16);
+pub const TOTAL_SECTIONS_MAXIMUM = @divExact(HEIGHT_MAXIMUM, 16);
 
-pub const BlockY = math.IntFittingRange(MIN_Y, MAX_Y);
-pub const UBlockY = math.IntFittingRange(0, HEIGHT);
-pub const BiomeY = math.IntFittingRange(MIN_BIOME_Y, MAX_BIOME_Y);
-pub const UBiomeY = math.IntFittingRange(0, MAX_BIOME_Y - MIN_BIOME_Y);
+pub const BIOME_MIN_Y_MINIMUM = @divExact(MIN_Y_MINIMUM, 4);
+pub const BIOMY_MIN_Y_MAXIMUM = @divExact(MIN_Y_MAXIMUM, 4);
+pub const BIOME_MAX_Y_MINIMUM = @divExact(MAX_Y_MINIMUM, 4);
+pub const BIOME_MAX_Y_MAXIMUM = @divExact(MAX_Y_MAXIMUM, 4);
+pub const BIOME_HEIGHT_MINIMUM = @divExact(HEIGHT_MINIMUM, 4);
+pub const BIOME_HEIGHT_MAXIMUM = @divExact(HEIGHT_MAXIMUM, 4);
+
+pub const BlockY = math.IntFittingRange(MIN_Y_MINIMUM, MAX_Y_MAXIMUM);
+pub const UBlockY = math.IntFittingRange(0, HEIGHT_MAXIMUM);
+pub const BiomeY = math.IntFittingRange(BIOME_MIN_Y_MINIMUM, BIOME_MAX_Y_MAXIMUM);
+pub const UBiomeY = math.IntFittingRange(0, BIOME_HEIGHT_MAXIMUM);
 
 pub inline fn blockYToU(y: BlockY, min_y: BlockY) UBlockY {
     return @intCast(y - min_y);
@@ -67,12 +78,8 @@ pub fn isBlock(comptime block: Block, bsid: BlockState.Id) bool {
 
 pub fn blockIsMotionBlocking(bsid: BlockState.Id) bool {
     inline for (.{
-        .air,
-        .void_air,
-        .cave_air,
-        .bamboo_sapling,
-        .cactus,
-        .water,
+        .air,            .void_air, .cave_air,
+        .bamboo_sapling, .cactus,   .water,
         .lava,
     }) |block| {
         if (isBlock(block, bsid)) return false;
@@ -115,27 +122,29 @@ pub const LightLevels = struct {
     const LenSpec = serde.Constant(VarI32, 2048, null);
     pub const ArrayLenSpec = serde.RestrictInt(
         serde.Casted(VarI32, usize),
-        .{ .max = TOTAL_CHUNK_SECTIONS + 2 },
+        .{ .max = TOTAL_SECTIONS_MAXIMUM + 2, .min = 0 },
     );
+    pub const E = LenSpec.E || ArrayLenSpec.E || BitSet.E;
 
     pub const Level = u4;
 
     pub const Section = union(enum) {
         single: Level,
-        direct: [2048]u8,
+        direct: *[2048]u8,
 
         pub fn set(
             self: *Section,
+            a: Allocator,
             x: BlockAxis,
             z: BlockAxis,
             y: BlockAxis,
             level: Level,
-        ) void {
+        ) !void {
             const ind = axisToIndex(BlockAxis, x, z, y);
             switch (self.*) {
                 .single => |d| if (d != level) {
-                    self.* = .{ .direct = undefined };
-                    @memset(&self.direct, d);
+                    self.* = .{ .direct = try a.create([2048]u8) };
+                    @memset(self.direct, d);
                     self.directSet(ind, level);
                 },
                 .direct => self.directSet(ind, level),
@@ -146,29 +155,49 @@ pub const LightLevels = struct {
             return switch (self.*) {
                 .single => |d| d,
                 .direct => |d| @truncate(
-                    d[ind >> 1] >> (@as(u1, @truncate(ind)) * @as(u3, 4)),
+                    d.*[ind >> 1] >> (@as(u1, @truncate(ind)) * @as(u3, 4)),
                 ),
             };
         }
         fn directSet(self: *Section, ind: AxisIndex(BlockAxis), level: Level) void {
             const mask = @as(u8, 0xF) << (@as(u1, @truncate(ind)) * @as(u3, 4));
-            self.direct[ind >> 1] &= ~mask;
-            self.direct[ind >> 1] |=
+            self.direct.*[ind >> 1] &= ~mask;
+            self.direct.*[ind >> 1] |=
                 @as(u8, level) << (@as(u1, @truncate(ind)) * @as(u3, 4));
+        }
+
+        pub fn deinit(self: *Section, a: Allocator) void {
+            switch (self.*) {
+                .single => {},
+                .direct => |d| a.destroy(d),
+            }
         }
     };
 
-    block: [TOTAL_CHUNK_SECTIONS + 2]Section =
-        [_]Section{.{ .single = 0xF }} ** (TOTAL_CHUNK_SECTIONS + 2),
-    sky: [TOTAL_CHUNK_SECTIONS + 2]Section =
-        [_]Section{.{ .single = 0xF }} ** (TOTAL_CHUNK_SECTIONS + 2),
+    block: []Section,
+    sky: []Section,
+
+    const Self = @This();
+
+    /// initializes all light levels to the given value
+    /// `section_count` is the number of sections (height / 16)
+    pub fn initAll(a: Allocator, level: Level, section_count: usize) !Self {
+        var self: Self = undefined;
+        self.block = try a.alloc(Section, section_count + 2);
+        errdefer a.free(self.block);
+        self.sky = try a.alloc(Section, section_count + 2);
+        errdefer a.free(self.sky);
+
+        @memset(self.block, .{ .single = level });
+        @memset(self.sky, .{ .single = level });
+        return self;
+    }
 
     pub fn write(writer: anytype, in: UT, ctx: anytype) !void {
-
         // sky light mask
         var mask = BitSet.initEmpty(in.sky.len);
         var sky_light_count: i32 = 0;
-        for (&in.sky, 0..) |section, i|
+        for (in.sky, 0..) |section, i|
             if (section != .single or section.single != 0x0) {
                 mask.set(i);
                 sky_light_count += 1;
@@ -178,7 +207,7 @@ pub const LightLevels = struct {
         // block light mask
         mask = BitSet.initEmpty(in.block.len);
         var block_light_count: i32 = 0;
-        for (&in.block, 0..) |section, i|
+        for (in.block, 0..) |section, i|
             if (section != .single or section.single != 0x0) {
                 mask.set(i);
                 block_light_count += 1;
@@ -187,45 +216,47 @@ pub const LightLevels = struct {
 
         // empty sky light mask
         mask = BitSet.initEmpty(in.sky.len);
-        for (&in.sky, 0..) |section, i|
+        for (in.sky, 0..) |section, i|
             if (section == .single and section.single == 0x0)
                 mask.set(i);
         try BitSet.write(writer, mask, ctx);
 
         // empty block light mask
         mask = BitSet.initEmpty(in.block.len);
-        for (&in.block, 0..) |section, i|
+        for (in.block, 0..) |section, i|
             if (section == .single and section.single == 0x0)
                 mask.set(i);
         try BitSet.write(writer, mask, ctx);
 
         // sky light array
         try VarI32.write(writer, sky_light_count, ctx);
-        for (&in.sky) |section| switch (section) {
+        for (in.sky) |section| switch (section) {
             .single => |d| if (d != 0x0) {
                 try LenSpec.write(writer, undefined, ctx);
                 try writer.writeByteNTimes(@as(u8, d) * 17, 2048);
             },
             .direct => |d| {
                 try LenSpec.write(writer, undefined, ctx);
-                try writer.writeAll(&d);
+                try writer.writeAll(d);
             },
         };
 
         // block light array
         try VarI32.write(writer, block_light_count, ctx);
-        for (&in.block) |section| switch (section) {
+        for (in.block) |section| switch (section) {
             .single => |d| if (d != 0x0) {
                 try LenSpec.write(writer, undefined, ctx);
                 try writer.writeByteNTimes(@as(u8, d) * 17, 2048);
             },
             .direct => |d| {
                 try LenSpec.write(writer, undefined, ctx);
-                try writer.writeAll(&d);
+                try writer.writeAll(d);
             },
         };
     }
     pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
+        const section_count = @divExact(ctx.world.height, 16);
+
         // sky light mask
         var sky_bits: BitSet = undefined;
         try BitSet.read(reader, &sky_bits, ctx);
@@ -242,37 +273,45 @@ pub const LightLevels = struct {
         var empty_block_bits: BitSet = undefined;
         try BitSet.read(reader, &empty_block_bits, ctx);
 
-        for (&out.sky) |*section| section.* = .{ .single = 0x0 };
-        for (&out.block) |*section| section.* = .{ .single = 0x0 };
+        out.* = try Self.initAll(ctx.allocator, 0x0, section_count);
+        errdefer out.deinit(ctx);
 
         var len: usize = undefined;
         try ArrayLenSpec.read(reader, &len, ctx);
-        for (&out.sky, 0..) |*section, i| if (sky_bits.get(i)) {
+        for (out.sky, 0..) |*section, i| if (sky_bits.get(i)) {
             try LenSpec.read(reader, undefined, ctx);
-            section.* = .{ .direct = undefined };
-            try reader.readNoEof(&section.direct);
-            const val = @as(u8, @as(u4, @truncate(section.direct[0]))) * 17;
-            if (allEql(section.direct, val))
-                section.* = .{ .single = @truncate(section.direct[0]) };
+            section.* = .{ .direct = try ctx.allocator.create([2048]u8) };
+            errdefer ctx.allocator.destroy(section.direct);
+            try reader.readNoEof(section.direct);
+            const val = @as(u8, @as(u4, @truncate(section.direct.*[0]))) * 17;
+            if (allEql(section.direct.*, val)) {
+                const direct = section.direct;
+                section.* = .{ .single = @truncate(direct.*[0]) };
+                ctx.allocator.destroy(direct);
+            }
         };
 
         try ArrayLenSpec.read(reader, &len, ctx);
-        for (&out.block, 0..) |*section, i| if (block_bits.get(i)) {
+        for (out.block, 0..) |*section, i| if (block_bits.get(i)) {
             try LenSpec.read(reader, undefined, ctx);
-            section.* = .{ .direct = undefined };
-            try reader.readNoEof(&section.direct);
-            const val = @as(u8, @as(u4, @truncate(section.direct[0]))) * 17;
-            if (allEql(section.direct, val))
-                section.* = .{ .single = @truncate(section.direct[0]) };
+            section.* = .{ .direct = try ctx.allocator.create([2048]u8) };
+            errdefer ctx.allocator.destroy(section.direct);
+            try reader.readNoEof(section.direct);
+            const val = @as(u8, @as(u4, @truncate(section.direct.*[0]))) * 17;
+            if (allEql(section.direct.*, val)) {
+                const direct = section.direct;
+                section.* = .{ .single = @truncate(direct.*[0]) };
+                ctx.allocator.destroy(direct);
+            }
         };
     }
     pub fn size(self: UT, ctx: anytype) usize {
         var sky_sections: usize = 0;
-        for (&self.sky) |section| {
+        for (self.sky) |section| {
             if (section != .single or section.single != 0x0) sky_sections += 1;
         }
         var block_sections: usize = 0;
-        for (&self.block) |section| {
+        for (self.block) |section| {
             if (section != .single or section.single != 0x0) block_sections += 1;
         }
         return (BitSet.initEmpty(self.sky.len).size(ctx) * 2) +
@@ -282,80 +321,125 @@ pub const LightLevels = struct {
             (sky_sections * (LenSpec.size(undefined, ctx) + 2048)) +
             (block_sections * (LenSpec.size(undefined, ctx) + 2048));
     }
-    pub fn deinit(self: *UT, _: anytype) void {
+    pub fn deinit(self: *UT, ctx: anytype) void {
+        {
+            var i = self.sky.len;
+            while (i > 0) {
+                i -= 1;
+                self.sky[i].deinit(ctx.allocator);
+            }
+        }
+        {
+            var i = self.block.len;
+            while (i > 0) {
+                i -= 1;
+                self.block[i].deinit(ctx.allocator);
+            }
+        }
+        ctx.allocator.free(self.sky);
+        ctx.allocator.free(self.block);
         self.* = undefined;
     }
 };
 
 test "light levels" {
-    try serde.doTestOnValue(LightLevels, .{}, false);
+    var levels = try LightLevels.initAll(testing.allocator, 0xF, 384 / 16);
+    const ctx = mcv.Context{
+        .allocator = testing.allocator,
+        .world = .{ .height = 384 },
+    };
+    defer levels.deinit(ctx);
+    try serde.doTestOnValue(LightLevels, levels, ctx);
 }
 
 pub const Column = struct {
-    sections: [TOTAL_CHUNK_SECTIONS]ChunkSection.UT = [_]ChunkSection.UT{.{
+    const DefaultChunkSection = ChunkSection.UT{
         .block_count = 0,
         .blocks = .{ .single = Block.air.defaultStateId() },
         .biomes = .{ .single = @intFromEnum(Biome.plains) },
-    }} ** TOTAL_CHUNK_SECTIONS,
+    };
+
+    sections: []ChunkSection.UT,
     block_entities: std.AutoHashMapUnmanaged(
         struct { x: BlockAxis, z: BlockAxis, y: BlockY },
         BlockEntityData.UT,
     ) = .{},
-    motion_blocking: HeightMap = .{},
-    world_surface: HeightMap = .{},
+    motion_blocking: HeightMap,
+    world_surface: HeightMap,
 
-    light_levels: LightLevels = .{},
+    light_levels: LightLevels,
 
-    pub fn initFlat() Column {
-        var self = Column{};
+    pub inline fn height(self: Column) UBlockY {
+        return @intCast(self.sections.len * 16);
+    }
+
+    pub fn initFlat(a: Allocator, section_count: usize) !Column {
+        const heightmap_bits = math.log2_int_ceil(usize, section_count * 16);
+        var self = Column{
+            .sections = try a.alloc(ChunkSection.UT, section_count),
+            .motion_blocking = .{
+                .inner = HeightMap.InnerArray.initAll(@intCast(heightmap_bits), 0),
+            },
+            .world_surface = .{
+                .inner = HeightMap.InnerArray.initAll(@intCast(heightmap_bits), 0),
+            },
+            .light_levels = undefined,
+        };
+        errdefer a.free(self.sections);
+        self.light_levels = try LightLevels.initAll(a, 0xF, section_count);
+        errdefer self.light_levels.deinit(.{ .allocator = a });
+        @memset(self.sections, DefaultChunkSection);
+        var y: UBlockY = 0;
         for (&[_]Block{
             .bedrock, .stone, .stone, .stone,
             .stone,   .stone, .stone, .stone,
             .dirt,    .dirt,  .dirt,  .grass_block,
-        }, 0..) |block, i| {
-            const y = @as(BlockY, @intCast(i)) + MIN_Y;
+        }) |block| {
             for (0..16) |z| for (0..16) |x|
                 self.setBlock(@intCast(x), @intCast(z), y, block.defaultStateId());
+            y += 1;
         }
         return self;
     }
 
     pub fn deinit(self: *Column, a: Allocator) void {
+        a.free(self.sections);
+        self.light_levels.deinit(.{ .allocator = a });
         var iter = self.block_entities.valueIterator();
-        while (iter.next()) |e| BlockEntityData.deinit(e, a);
+        while (iter.next()) |e| BlockEntityData.deinit(e, .{ .allocator = a });
         self.block_entities.deinit(a);
         self.* = undefined;
     }
 
-    pub fn blockAt(self: Column, x: BlockAxis, z: BlockAxis, y: BlockY) BlockState.Id {
-        return if (y >= MIN_Y and y < MAX_Y)
-            self.sections[blockYToU(y, MIN_Y) >> 4].blocks
-                .get(x, z, @truncate(blockYToU(y, MIN_Y)))
+    pub fn blockAt(self: Column, x: BlockAxis, z: BlockAxis, y: UBlockY) BlockState.Id {
+        return if (y < self.height())
+            self.sections[y >> 4].blocks
+                .get(x, z, @truncate(y))
         else
             comptime BlockState.toId(.air);
     }
-    pub fn biomeAt(self: Column, x: BiomeAxis, z: BiomeAxis, y: BiomeY) Biome.Id {
-        return if (y >= MIN_BIOME_Y >> 2 and y < MAX_BIOME_Y >> 2)
-            self.sections[biomeYToU(y, MIN_BIOME_Y) >> 2].blocks
-                .get(x, z, @truncate(biomeYToU(y, MIN_BIOME_Y)))
+
+    pub fn biomeAt(self: Column, x: BiomeAxis, z: BiomeAxis, y: UBiomeY) Biome.Id {
+        return if (y < self.height() >> 2)
+            self.sections[y >> 2].blocks.get(x, z, @truncate(y))
         else
             @intFromEnum(Biome.the_void);
     }
+
     pub fn setBlock(
         self: *Column,
         x: BlockAxis,
         z: BlockAxis,
-        y: BlockY,
+        y: UBlockY,
         value: BlockState.Id,
     ) void {
-        if (y < MIN_Y or y >= MAX_Y) return;
-        const section = &self.sections[blockYToU(y, MIN_Y) >> 4];
-        const last_air = isAir(section.blocks.get(x, z, @truncate(blockYToU(y, MIN_Y))));
+        if (y >= self.height()) return;
+        const section = &self.sections[y >> 4];
+        const last_air = isAir(section.blocks.get(x, z, @truncate(y)));
         const new_air = isAir(value);
-        section.blocks.set(x, z, @truncate(blockYToU(y, MIN_Y)), value);
+        section.blocks.set(x, z, @truncate(y), value);
 
-        // update heightmap while we're at it; this is a lot faster than generating
-        //     through `createHeightMap` (at least if flat)
+        // update heightmap while we're at it
         if (last_air and !new_air) {
             section.block_count += 1;
         } else if (!last_air and new_air) {
@@ -363,63 +447,27 @@ pub const Column = struct {
         }
 
         if (blockIsMotionBlocking(value) and self.motion_blocking.get(x, z) < y + 1)
-            self.motion_blocking.set(x, z, blockYToU(y + 1, MIN_Y));
+            self.motion_blocking.set(x, z, y + 1);
         if (blockIsWorldSurface(value) and self.world_surface.get(x, z) < y + 1)
-            self.world_surface.set(x, z, blockYToU(y + 1, MIN_Y));
+            self.world_surface.set(x, z, y + 1);
     }
     pub fn setBiome(
         self: *Column,
         x: BiomeAxis,
         z: BiomeAxis,
-        y: BiomeY,
+        y: UBiomeY,
         value: Biome.Id,
     ) void {
-        if (y < MIN_BIOME_Y >> 2 and y >= MAX_BIOME_Y >> 2) return;
-        self.sections[biomeYToU(y, MIN_BIOME_Y) >> 2].biomes
-            .set(x, z, @truncate(biomeYToU(y, MIN_BIOME_Y)), value);
-    }
-
-    // warning: this fn is slow
-    pub fn createHeightMap(
-        self: Column,
-        comptime kind: enum { motion_blocking, world_surface },
-    ) HeightMap {
-        var map = HeightMap{};
-        for (0..16) |z| for (0..16) |x| {
-            var y: BlockY = MAX_Y - 1;
-            while (true) {
-                const block = self.blockAt(@intCast(x), @intCast(z), y);
-                if (switch (kind) {
-                    .motion_blocking => blockIsMotionBlocking(block),
-                    .world_surface => blockIsWorldSurface(block),
-                }) {
-                    // TODO: uhh check this. is the heightmap relative to 0 or MIN_Y?
-                    //     im assuming it is MIN_Y for now
-                    map.set(@intCast(x), @intCast(z), blockYToU(y, MIN_Y));
-                    break;
-                }
-                if (self.sections[blockYToU(y, MIN_Y) >> 4].blocks == .single) {
-                    y -= 15;
-                }
-
-                if (y <= MIN_Y) {
-                    break;
-                } else {
-                    y -= 1;
-                }
-            }
-        };
-        return map;
+        if (y >= self.height() >> 2) return;
+        self.sections[y >> 2].biomes.set(x, z, @truncate(y), value);
     }
 };
 
 pub const HeightMap = struct {
     const Self = @This();
 
-    // TODO: this should be runtime known. (context passing refactor necessary)
-    pub const BITS_PER_VALUE = @as(comptime_int, @typeInfo(UBlockY).Int.bits);
-
-    pub const InnerArray = PackedArray(12, 256, .left);
+    pub const InnerArray =
+        PackedArray(math.log2_int_ceil(usize, HEIGHT_MAXIMUM), 256, .left);
     pub const ListSpec = serde.PrefixedArray(
         serde.Num(i32, .big),
         serde.Num(u64, .big),
@@ -428,7 +476,7 @@ pub const HeightMap = struct {
     pub const InnerLengthSpec = ListSpec.SourceSpec;
     pub const InnerListSpec = ListSpec.TargetSpec;
 
-    inner: InnerArray = InnerArray.init(BITS_PER_VALUE),
+    inner: InnerArray,
 
     pub const UT = @This();
     pub const E = ListSpec.E;
@@ -437,6 +485,8 @@ pub const HeightMap = struct {
         try ListSpec.write(writer, in.inner.constLongSlice(), ctx);
     }
     pub fn read(reader: anytype, out: *UT, ctx: anytype) !void {
+        const height = ctx.world.height;
+
         var len: InnerLengthSpec.UT = undefined;
         try InnerLengthSpec.read(reader, &len, ctx);
         var slice_: []const InnerListSpec.ElemSpec.UT = undefined;
@@ -446,7 +496,7 @@ pub const HeightMap = struct {
             out.inner.data[0..len],
             ctx,
         );
-        out.inner.bits = BITS_PER_VALUE;
+        out.inner.bits = math.log2_int_ceil(UBlockY, height + 1);
     }
     pub fn size(self: UT, ctx: anytype) usize {
         return ListSpec.size(self.inner.constLongSlice(), ctx);
@@ -463,9 +513,7 @@ pub const HeightMap = struct {
     }
 };
 test "heightmap" {
-    var m = HeightMap{
-        .inner = HeightMap.InnerArray.initAll(HeightMap.BITS_PER_VALUE, 1),
-    };
+    var m = HeightMap{ .inner = HeightMap.InnerArray.initAll(9, 1) };
     for (0..256) |i|
         m.inner.set(@intCast(i), @intCast(i));
     for (0..256) |i|
@@ -864,7 +912,7 @@ pub fn PalettedContainer(comptime kind: enum { block, biome }) type {
 test "paletted container" {
     const ST = PalettedContainer(.block);
     var cont = ST{ .single = 0 };
-    try serde.doTestOnValue(ST, cont, false);
+    try serde.doTestOnValue(ST, cont, .{});
     for (0..16) |y| for (0..16) |z| for (0..16) |x| {
         cont.set(@intCast(x), @intCast(z), @intCast(y), @as(u4, @intCast(x)));
     };
@@ -875,7 +923,7 @@ test "paletted container" {
             cont.get(@intCast(x), @intCast(z), @intCast(y)),
         );
     };
-    try serde.doTestOnValue(ST, cont, false);
+    try serde.doTestOnValue(ST, cont, .{});
     for (0..16) |y| for (0..16) |z| for (0..16) |x| {
         cont.set(
             @intCast(x),
@@ -891,5 +939,5 @@ test "paletted container" {
             cont.get(@intCast(x), @intCast(z), @intCast(y)),
         );
     };
-    try serde.doTestOnValue(ST, cont, false);
+    try serde.doTestOnValue(ST, cont, .{});
 }

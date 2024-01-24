@@ -987,7 +987,7 @@ test "named tags" {
             .name = "test",
             .tag = .byte_array,
         },
-        true,
+        .{ .allocator = testing.allocator },
     );
 }
 
@@ -1000,7 +1000,7 @@ test "test.nbt" {
             0x09, 0x42, 0x61, 0x6e, 0x61, 0x6e, 0x72, 0x61, 0x6d, 0x61, 0x00,
         },
         .{ .name = "Bananrama" },
-        true,
+        .{ .allocator = testing.allocator },
     );
 }
 
@@ -1139,12 +1139,14 @@ test "bigtest.nbt, dynamic" {
 
     const ST = Named("Level", Dynamic(.any, 20));
     var result: ST.UT = undefined;
-    try ST.read(stream.reader(), &result, .{ .allocator = testing.allocator });
-    defer ST.deinit(&result, .{ .allocator = testing.allocator });
+
+    const ctx = .{ .allocator = testing.allocator };
+    try ST.read(stream.reader(), &result, ctx);
+    defer ST.deinit(&result, ctx);
 
     var writebuf = std.ArrayList(u8).init(testing.allocator);
     defer writebuf.deinit();
-    try ST.write(writebuf.writer(), result, .{});
+    try ST.write(writebuf.writer(), result, ctx);
     try testing.expectEqualSlices(u8, buf, writebuf.items);
 
     //try DynamicValue.print(result, "Level", std.io.getStdErr().writer(), 0);

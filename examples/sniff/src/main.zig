@@ -247,6 +247,16 @@ pub fn handleClientbound(
         alive_mutex.unlock();
     }
 
+    var dimension_heights = std.StringHashMapUnmanaged(mcp.chunk.UBlockY){};
+    defer {
+        var iter = dimension_heights.keyIterator();
+        while (iter.next()) |key| {
+            a.free(key.*);
+        }
+        dimension_heights.deinit(a);
+    }
+    var current_height: mcp.chunk.UBlockY = 384;
+
     var current_state: CurrentState = current_state_;
 
     var arena = std.heap.ArenaAllocator.init(a);
@@ -307,11 +317,44 @@ pub fn handleClientbound(
                     }
                 }
 
-                var packet = frame.parse(ST, .{ .allocator = aa }) catch |e| {
+                const ctx = mcv.Context{
+                    .allocator = aa,
+                    .world = .{ .height = current_height },
+                };
+                var packet = frame.parse(ST, ctx) catch |e| {
                     try stdout.print("parse error: \"{s}\"\n", .{@errorName(e)});
                     continue;
                 };
-                defer ST.deinit(&packet, .{ .allocator = aa });
+                defer ST.deinit(&packet, ctx);
+
+                if (ST == mcv.C.CB) {
+                    // we need to keep track of dimension heights to properly handle
+                    //     heightmaps and light levels
+                    if (packet == .registry_data) {
+                        if (packet.registry_data.dimension_type) |dimensions| {
+                            for (dimensions.value) |dimension| {
+                                const height = std.math.cast(
+                                    mcp.chunk.UBlockY,
+                                    dimension.element.height,
+                                ) orelse continue;
+                                if (dimension_heights.getPtr(dimension.name)) |d| {
+                                    d.* = height;
+                                } else {
+                                    const duped_name = try a.dupe(u8, dimension.name);
+                                    errdefer a.free(duped_name);
+                                    try dimension_heights
+                                        .putNoClobber(a, duped_name, height);
+                                }
+                            }
+                        }
+                    }
+                } else if (ST == mcv.P.CB) {
+                    if (packet == .login) {
+                        if (dimension_heights
+                            .get(packet.login.respawn.dimension_type)) |height|
+                            current_height = height;
+                    }
+                }
 
                 if (options.show_packet_contents) {
                     try mcp.debugPrint(stdout, packet, 0);

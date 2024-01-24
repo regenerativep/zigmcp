@@ -758,7 +758,7 @@ test "byte limited" {
             &.{ 9, 10, 11, 12, 13, 14, 15, 16, 17 },
             &.{ 18, 19 },
         },
-        true,
+        .{ .allocator = testing.allocator },
     );
     try doTestOnValue(
         ByteLimited(u16, Remaining(PrefixedArray(u8, u8, .{}), .{}), .{}),
@@ -769,7 +769,7 @@ test "byte limited" {
             &.{ 9, 10, 11, 12, 13, 14, 15, 16, 17 },
             &.{ 18, 19 },
         },
-        true,
+        .{ .allocator = testing.allocator },
     );
 }
 
@@ -982,10 +982,10 @@ pub fn Casted(comptime T: type, comptime Target: type) type {
 }
 
 test "serde casted" {
-    try doTest(Casted(i16, u8), &.{ 0x00, 0x20 }, 0x20, false);
+    try doTest(Casted(i16, u8), &.{ 0x00, 0x20 }, 0x20, .{});
 }
 test "serde numoffset" {
-    try doTest(NumOffset(i16, 1), &.{ 0x00, 0x20 }, 0x1F, false);
+    try doTest(NumOffset(i16, 1), &.{ 0x00, 0x20 }, 0x1F, .{});
 }
 
 pub fn BitCasted(comptime T: type, comptime Target: type) type {
@@ -1033,28 +1033,41 @@ pub fn doTest(
     comptime ST: type,
     buf: []const u8,
     expected: ST.UT,
-    comptime check_allocations: bool,
+    ctx: anytype,
 ) !void {
+    const CTX = struct {
+        pub var ctx__: @TypeOf(ctx) = undefined;
+    };
+    CTX.ctx__ = ctx;
     var reader = std.io.fixedBufferStream(buf);
     var result: ST.UT = undefined;
-    try ST.read(reader.reader(), &result, .{ .allocator = testing.allocator });
-    defer ST.deinit(&result, .{ .allocator = testing.allocator });
+    try ST.read(reader.reader(), &result, ctx);
+    defer ST.deinit(&result, ctx);
     try testing.expectEqualDeep(expected, result);
     //std.debug.print("\nexpected: {any}\nresult: {any}\n", .{ expected, result });
-    try testing.expectEqual(buf.len, ST.size(result, .{}));
+    try testing.expectEqual(buf.len, ST.size(result, ctx));
 
     var writebuf = std.ArrayList(u8).init(testing.allocator);
     defer writebuf.deinit();
-    try ST.write(writebuf.writer(), result, .{});
+    try ST.write(writebuf.writer(), result, ctx);
     try testing.expectEqualSlices(u8, buf, writebuf.items);
 
-    if (check_allocations) {
+    if (@hasField(@TypeOf(ctx), "allocator")) {
         testing.checkAllAllocationFailures(testing.allocator, (struct {
             pub fn read(allocator: Allocator, data: []const u8) !void {
                 var stream = std.io.fixedBufferStream(data);
                 var r: ST.UT = undefined;
-                try ST.read(stream.reader(), &r, .{ .allocator = allocator });
-                ST.deinit(&r, .{ .allocator = allocator });
+                const ctx_ = blk: {
+                    if (@typeInfo(@TypeOf(ctx)).Struct.fields.len > 1) {
+                        var ctx_ = CTX.ctx__;
+                        ctx_.allocator = allocator;
+                        break :blk ctx_;
+                    } else {
+                        break :blk .{ .allocator = allocator };
+                    }
+                };
+                try ST.read(stream.reader(), &r, ctx_);
+                ST.deinit(&r, ctx_);
             }
         }).read, .{buf}) catch |e| {
             if (e != error.SwallowedOutOfMemoryError) return e;
@@ -1064,30 +1077,43 @@ pub fn doTest(
 pub fn doTestOnValue(
     comptime ST: type,
     value: ST.UT,
-    comptime check_allocations: bool,
+    ctx: anytype,
 ) !void {
+    const CTX = struct {
+        pub var ctx__: @TypeOf(ctx) = undefined;
+    };
+    CTX.ctx__ = ctx;
     var writebuf = std.ArrayList(u8).init(testing.allocator);
     defer writebuf.deinit();
-    try ST.write(writebuf.writer(), value, .{});
+    try ST.write(writebuf.writer(), value, ctx);
 
     var stream = std.io.fixedBufferStream(writebuf.items);
     var result: ST.UT = undefined;
-    try ST.read(stream.reader(), &result, .{ .allocator = testing.allocator });
-    defer ST.deinit(&result, .{ .allocator = testing.allocator });
+    try ST.read(stream.reader(), &result, ctx);
+    defer ST.deinit(&result, ctx);
 
     {
         errdefer std.debug.print("\ngot {any}\n", .{result});
         try testing.expectEqualDeep(value, result);
     }
-    try testing.expectEqual(writebuf.items.len, ST.size(result, .{}));
+    try testing.expectEqual(writebuf.items.len, ST.size(result, ctx));
 
-    if (check_allocations) {
+    if (@hasField(@TypeOf(ctx), "allocator")) {
         testing.checkAllAllocationFailures(testing.allocator, (struct {
             pub fn read(allocator: Allocator, data: []const u8) !void {
                 var stream_ = std.io.fixedBufferStream(data);
                 var r: ST.UT = undefined;
-                try ST.read(stream_.reader(), &r, .{ .allocator = allocator });
-                ST.deinit(&r, .{ .allocator = allocator });
+                const ctx_ = blk: {
+                    if (@typeInfo(@TypeOf(ctx)).Struct.fields.len > 1) {
+                        var ctx_ = CTX.ctx__;
+                        ctx_.allocator = allocator;
+                        break :blk ctx_;
+                    } else {
+                        break :blk .{ .allocator = allocator };
+                    }
+                };
+                try ST.read(stream_.reader(), &r, ctx_);
+                ST.deinit(&r, ctx_);
             }
         }).read, .{writebuf.items}) catch |e| {
             if (e != error.SwallowedOutOfMemoryError) return e;
@@ -1127,5 +1153,5 @@ test "serde" {
         .c = .C,
         .d = .{ .B = 0x00 },
         .e = &.{ .{ .a = .h, .b = 3 }, .{ .a = .h, .b = 5 }, .{ .a = .g, .b = 6 } },
-    }, true);
+    }, .{ .allocator = testing.allocator });
 }

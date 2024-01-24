@@ -20,7 +20,7 @@ const HeightMap = @import("chunk.zig").HeightMap;
 const ChunkSection = @import("chunk.zig").ChunkSection;
 const PalettedContainer = @import("chunk.zig").PalettedContainer;
 const BlockEntity = @import("chunk.zig").BlockEntity;
-const TOTAL_CHUNK_SECTIONS = @import("chunk.zig").TOTAL_CHUNK_SECTIONS;
+const chunk_zig = @import("chunk.zig");
 const LightLevels = @import("chunk.zig").LightLevels;
 
 pub const BitSet = @import("mcserde.zig").BitSet;
@@ -519,17 +519,17 @@ pub const Slot = Optional(struct {
 
 test "protocol slot" {
     // https://wiki.vg/Slot_Data
-    try serde.doTest(Slot, &.{0x00}, null, false);
+    try serde.doTest(Slot, &.{0x00}, null, .{ .allocator = testing.allocator });
     try serde.doTest(Slot, &.{ 0x01, 0x01, 0x01, 0x00 }, .{
         .item_id = 1,
         .item_count = 1,
         .data = null,
-    }, false);
+    }, .{ .allocator = testing.allocator });
     try serde.doTest(Slot, &.{ 0x01, 0x01, 0x01, 0x03, 0x12, 0x34, 0x56, 0x78 }, .{
         .item_id = 1,
         .item_count = 1,
         .data = .{ .int = @bitCast(@as(u32, 0x12345678)) },
-    }, false);
+    }, .{ .allocator = testing.allocator });
 }
 
 pub fn PlusOne(comptime T: type) type {
@@ -936,6 +936,7 @@ pub const WorldEvent = serde.Union(union(WorldEventId) {
     copper_scrape_oxidation: I320,
 });
 
+// TODO: get rid of this
 pub const DimensionSpec = StringEnum(struct {
     pub const overworld = "minecraft:overworld";
     pub const nether = "minecraft:the_nether";
@@ -950,7 +951,6 @@ pub const Gamemode = enum(u8) {
 };
 
 pub const RespawnSpec = serde.Struct(struct {
-    // TODO: name probably shouldnt be an enum
     dimension_type: Identifier,
     dimension_name: DimensionSpec,
     hashed_seed: u64,
@@ -2155,7 +2155,7 @@ pub const P = struct {
             }),
             data: serde.ByteLimited(
                 VarI32,
-                Remaining(ChunkSection, .{ .est_size = TOTAL_CHUNK_SECTIONS }),
+                Remaining(ChunkSection, .{ .est_size = 384 / 16 }),
                 .{},
             ),
             block_entities: PrefixedArray(VarI32, BlockEntity, .{}),
@@ -3691,19 +3691,29 @@ pub const P = struct {
     });
 };
 
+pub const Context = struct {
+    allocator: Allocator,
+    world: struct {
+        height: chunk_zig.UBlockY,
+    },
+};
+
 test "chunk packet" {
-    const chunk = @import("chunk.zig").Column.initFlat();
+    var chunk = try chunk_zig.Column.initFlat(testing.allocator, 384 / 16);
+    defer chunk.deinit(testing.allocator);
+    var lightlevels = try LightLevels.initAll(testing.allocator, 0xF, 384 / 16);
+    defer lightlevels.deinit(.{ .allocator = testing.allocator });
     try serde.doTestOnValue(P.CB, .{
         .chunk_data_and_update_light = .{
             .chunk_x = 0,
             .chunk_z = 10,
             .heightmaps = .{
-                .motion_blocking = chunk.createHeightMap(.motion_blocking),
-                .world_surface = chunk.createHeightMap(.world_surface),
+                .motion_blocking = chunk.motion_blocking,
+                .world_surface = chunk.world_surface,
             },
-            .data = &chunk.sections,
+            .data = chunk.sections,
             .block_entities = &.{},
-            .light_levels = .{},
+            .light_levels = lightlevels,
         },
-    }, true);
+    }, Context{ .allocator = testing.allocator, .world = .{ .height = 384 } });
 }
