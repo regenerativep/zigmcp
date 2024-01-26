@@ -2,7 +2,7 @@
 
 A Minecraft (Java Edition) protocol implementation in Zig. Currently supports 1.20.4
 (765). Contains the protocol implementation, and a static and dynamic NBT implementation.
-Depends on [jdknezek/uuid6-zig](https://github.com/jdknezek/uuid6-zig) and
+Depends on [tensorush/zig-uuid](https://github.com/tensorush/zig-uuid) and
 [PrismarineJS/minecraft-data](https://github.com/PrismarineJS/minecraft-data).
 
 Currently, many parts of this are probably untested. Several parts of protocol

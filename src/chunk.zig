@@ -467,7 +467,7 @@ pub const HeightMap = struct {
     const Self = @This();
 
     pub const InnerArray =
-        PackedArray(math.log2_int_ceil(usize, HEIGHT_MAXIMUM), 256, .left);
+        PackedArray(math.log2_int_ceil(usize, HEIGHT_MAXIMUM), 256, .right);
     pub const ListSpec = serde.PrefixedArray(
         serde.Num(i32, .big),
         serde.Num(u64, .big),

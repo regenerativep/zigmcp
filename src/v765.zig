@@ -23,6 +23,11 @@ const BlockEntity = @import("chunk.zig").BlockEntity;
 const chunk_zig = @import("chunk.zig");
 const LightLevels = @import("chunk.zig").LightLevels;
 
+pub const UBlockY = chunk_zig.UBlockY;
+pub const BlockY = chunk_zig.BlockY;
+pub const UBiomeY = chunk_zig.UBiomeY;
+pub const BiomeY = chunk_zig.BiomeY;
+
 pub const BitSet = @import("mcserde.zig").BitSet;
 pub const PString = @import("mcserde.zig").PString;
 pub const Uuid = @import("mcserde.zig").Uuid;
@@ -2146,7 +2151,7 @@ pub const P = struct {
             heightmaps: nbt.Named(null, struct {
                 motion_blocking: nbt.WithName(
                     "MOTION_BLOCKING",
-                    nbt.Wrap(HeightMap, .long_array),
+                    ?nbt.Wrap(HeightMap, .long_array),
                 ),
                 world_surface: nbt.WithName(
                     "WORLD_SURFACE",
