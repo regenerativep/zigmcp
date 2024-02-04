@@ -31,15 +31,6 @@ pub fn build(b: *std.Build) void {
     mcp_mod.addImport("uuid", uuid_mod);
     mcp_mod.addImport("mcp-generated", mcp_gen_mod);
 
-    //const lib = b.addStaticLibrary(.{
-    //    .name = "zigmcp",
-    //    .root_source_file = .{ .path = "src/main.zig" },
-    //    .target = target,
-    //    .optimize = optimize,
-    //});
-    //lib.addModule("uuid6", uuid6_mod);
-    //b.installArtifact(lib);
-
     const main_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/main.zig" },
         .target = target,

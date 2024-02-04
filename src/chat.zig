@@ -61,6 +61,9 @@ const MaxNbtDepth = @import("main.zig").MaxNbtDepth;
 //});
 pub const Chat = nbt.Multiple(union(enum) {
     string: []const u8,
+    //compound: nbt.Compound(struct {
+    //    text: ?[]const u8,
+    //}),
     //compound: ChatCompound,
     compound: nbt.Dynamic(.compound, MaxNbtDepth),
 });
