@@ -257,9 +257,8 @@ pub fn main() !void {
     }
 
     const address = net.Address.initIp4(.{ 127, 0, 0, 1 }, 25400);
-    var server = net.StreamServer.init(.{ .reuse_address = true });
+    var server = try address.listen(.{ .reuse_port = true });
     defer server.deinit();
-    try server.listen(address);
 
     print("Listening on {}\n", .{address});
 
@@ -294,7 +293,7 @@ fn print(comptime fmt_: [:0]const u8, args: anytype) void {
 const CurrentState = PacketKind;
 pub fn handleServerbound(
     a: Allocator,
-    conn: net.StreamServer.Connection,
+    conn: net.Server.Connection,
     options: Options,
 ) !void {
     @setEvalBranchQuota(10_000);

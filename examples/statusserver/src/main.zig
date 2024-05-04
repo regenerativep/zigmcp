@@ -13,9 +13,9 @@ pub fn main() !void {
     defer _ = gpa.deinit();
 
     const address = net.Address.initIp4(.{ 127, 0, 0, 1 }, 25565);
-    var server = net.StreamServer.init(.{ .reuse_address = true });
+    var server = try address.listen(.{ .reuse_port = true });
+
     defer server.deinit();
-    try server.listen(address);
     std.log.info("Status server listening on {}", .{address});
 
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
@@ -32,7 +32,7 @@ pub fn main() !void {
         };
     }
 }
-pub fn handleClient(a: Allocator, conn: net.StreamServer.Connection) !void {
+pub fn handleClient(a: Allocator, conn: net.Server.Connection) !void {
     defer conn.stream.close();
     var br = io.bufferedReader(conn.stream.reader());
 
