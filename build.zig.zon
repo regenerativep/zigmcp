@@ -8,8 +8,8 @@
             .hash = "12206719f567db54683a3fdd96e065bfc498fa6a5acd081e911a03c00eb18fb31493",
         },
         .zuid = .{
-            .url = "https://github.com/KeithBrown39423/zuid/archive/v1.1.1.tar.gz",
-            .hash = "1220e05a3f459c0adbf2b09b4764838833e3e716a712852aec6ef1636f4d8e9f646e",
+            .url = "https://github.com/KeithBrown39423/zuid/archive/refs/tags/v2.1.0.tar.gz",
+            .hash = "122038300cf0c1185f67d002d8530f67c854ad96dfa6627f6b3a4a20af0f5eed7eca",
         },
     },
 }
